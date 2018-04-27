@@ -1,0 +1,7 @@
+
+/target
+**/*.rs.bk
+**/*.nro
+**/*.nso
+**/*.nsp
+**/*.elf

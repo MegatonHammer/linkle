@@ -1,0 +1,13 @@
+[package]
+name = "elf2nxo"
+version = "0.1.0"
+authors = ["Thog <contact@thog.eu>"]
+license = "MIT/Apache-2.0"
+homepage = "https://github.com/MegatonHammer/elf2nxo/"
+repository = "https://github.com/MegatonHammer/elf2nxo/"
+
+[dependencies]
+elf = "0.0.10"
+byteorder = "1.2.2"
+lz4-sys = { git= "https://github.com/Thog/lz4-rs.git"}
+crypto-hash = "0.3.1"
