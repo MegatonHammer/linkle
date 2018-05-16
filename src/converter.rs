@@ -16,6 +16,20 @@ pub struct Nxo {
     bss_section: Option<elf::types::ProgramHeader>,
 }
 
+fn pad_segment(
+    previous_segment_data: &mut Vec<u8>,
+    offset: usize,
+    section: &elf::types::ProgramHeader,
+) {
+    let section_vaddr = section.vaddr as usize;
+    let section_supposed_start = previous_segment_data.len() + offset;
+
+    if section_vaddr > section_supposed_start {
+        let real_size = previous_segment_data.len();
+        previous_segment_data.resize(real_size + (section_vaddr - section_supposed_start), 0);
+    }
+}
+
 impl Nxo {
     pub fn new(input: String) -> std::io::Result<Self> {
         let path = PathBuf::from(input);
@@ -75,12 +89,27 @@ impl Nxo {
         let text_section = &self.text_section;
         let rodata_section = &self.rodata_section;
         let data_section = &self.data_section;
+
+        // Get segments data
         let mut code = utils::get_section_data(&mut self.file, text_section)?;
         let mut rodata = utils::get_section_data(&mut self.file, rodata_section)?;
         let mut data = utils::get_section_data(&mut self.file, data_section)?;
-        utils::add_padding(&mut code);
-        utils::add_padding(&mut rodata);
-        utils::add_padding(&mut data);
+
+        // First correctly align to be conform to the NRO standard
+        utils::add_padding(&mut code, 0xFFF);
+        utils::add_padding(&mut rodata, 0xFFF);
+        utils::add_padding(&mut data, 0xFFF);
+
+        // Finally fix possible misalign of  vaddr because NRO only have one base
+        pad_segment(&mut code, 0, rodata_section);
+        pad_segment(&mut rodata, code.len(), data_section);
+
+        match self.bss_section {
+            Some(section) => {
+                pad_segment(&mut data, code.len() + rodata.len(), &section);
+            }
+            _ => (),
+        }
 
         let total_len: u32 = (code.len() + rodata.len() + data.len()) as u32;
 
@@ -123,8 +152,7 @@ impl Nxo {
                 if section.vaddr != file_offset.into() {
                     println!(
                     "Warning: possible misalign bss\n.bss addr: 0x{:x}\nexpected offset: 0x{:x}",
-                    section.vaddr, file_offset
-                );
+                    section.vaddr, file_offset);
                 }
                 output_writter
                     .write_u32::<LittleEndian>(((section.memsz + 0xFFF) & !0xFFF) as u32)?;
@@ -174,6 +202,14 @@ impl Nxo {
         let mut rodata = utils::get_section_data(&mut self.file, rodata_section)?;
         let mut data = utils::get_section_data(&mut self.file, data_section)?;
 
+        // Because bss doesn't have it's own segment in NSO, we need to pad .data to the .bss vaddr
+        match self.bss_section {
+            Some(section) => {
+                pad_segment(&mut data, data_section.vaddr as usize, &section);
+            }
+            _ => (),
+        }
+
         // NSO magic
         output_writter.write(b"NSO0")?;
         // Unknown
@@ -186,12 +222,10 @@ impl Nxo {
 
         // Segment Header (3 entries)
         let mut file_offset = 0x100;
-        let mut memory_offset = 0x0;
 
         // .text segment
         let compressed_code = utils::compress(&mut code);
         let compressed_code_size = compressed_code.len() as u32;
-        let uncompressed_code_size = code.len() as u32;
         output_writter.write_u32::<LittleEndian>(file_offset as u32)?;
 
         output_writter.write_u32::<LittleEndian>(text_section.vaddr as u32)?;
@@ -199,13 +233,11 @@ impl Nxo {
         // Unknown (offset?)
         output_writter.write_u32::<LittleEndian>(1)?;
         file_offset += compressed_code_size;
-        memory_offset += uncompressed_code_size;
 
         // .rodata segment
         let compressed_rodata = utils::compress(&mut rodata);
 
         let compressed_rodata_size = compressed_rodata.len() as u32;
-        let uncompressed_rodata_size = rodata.len() as u32;
         output_writter.write_u32::<LittleEndian>(file_offset as u32)?;
         output_writter.write_u32::<LittleEndian>(rodata_section.vaddr as u32)?;
         output_writter.write_u32::<LittleEndian>(rodata_section.filesz as u32)?;
@@ -213,26 +245,24 @@ impl Nxo {
         // Unknown (size?)
         output_writter.write_u32::<LittleEndian>(1)?;
         file_offset += compressed_rodata_size;
-        memory_offset += uncompressed_rodata_size;
 
         // .data segment
         let compressed_data = utils::compress(&mut data);
 
         let compressed_data_size = compressed_data.len() as u32;
-        let uncompressed_data_size = data.len() as u32;
+        let uncompressed_data_size = data.len() as u64;
         output_writter.write_u32::<LittleEndian>(file_offset as u32)?;
         output_writter.write_u32::<LittleEndian>(data_section.vaddr as u32)?;
         output_writter.write_u32::<LittleEndian>(data_section.filesz as u32)?;
-        memory_offset += uncompressed_data_size;
 
         // BSS size
         match self.bss_section {
             Some(section) => {
-                if section.vaddr != memory_offset.into() {
+                let memory_offset = data_section.vaddr + uncompressed_data_size;
+                if section.vaddr != memory_offset {
                     println!(
                     "Warning: possible misalign bss\n.bss addr: 0x{:x}\nexpected offset: 0x{:x}",
-                    section.vaddr, memory_offset
-                );
+                    section.vaddr, memory_offset);
                 }
                 // (bss_segment['p_memsz'] + 0xFFF) & ~0xFFF
                 output_writter

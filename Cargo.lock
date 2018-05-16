@@ -55,7 +55,7 @@ dependencies = [
 
 [[package]]
 name = "elf2nxo"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "byteorder 1.2.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "crypto-hash 0.3.1 (registry+https://github.com/rust-lang/crates.io-index)",

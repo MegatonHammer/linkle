@@ -1,6 +1,6 @@
 [package]
 name = "elf2nxo"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Thog <contact@thog.eu>"]
 license = "MIT/Apache-2.0"
 homepage = "https://github.com/MegatonHammer/elf2nxo/"

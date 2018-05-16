@@ -6,9 +6,9 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::process;
 
-pub fn add_padding(vec: &mut Vec<u8>) -> () {
+pub fn add_padding(vec: &mut Vec<u8>, padding: usize) -> () {
     let real_size = vec.len();
-    vec.resize(((real_size as usize) + 0xFFF) & !0xFFF, 0);
+    vec.resize(((real_size as usize) + padding) & !padding, 0);
 }
 
 pub fn get_section_data(
