@@ -114,6 +114,18 @@ impl Nxo {
         // .data segment
         let data_size = data.len() as u32;
         output_writter.write_u32::<LittleEndian>(file_offset)?;
+
+        // Pad the data segment if BSS has special alignment requirements
+        let data_size = match self.bss_section {
+            Some(section) if section.vaddr as u32 - (file_offset + data_size) != 0 => {
+                let old_len = data.len();
+                let data_padding = section.vaddr as u32 - (file_offset + data_size);
+                data.resize(old_len + data_padding as usize, 0);
+                data_size + data_padding
+            },
+            _ => data_size
+        };
+
         output_writter.write_u32::<LittleEndian>(data_size)?;
         file_offset += data_size;
 
