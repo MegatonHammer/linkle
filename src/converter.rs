@@ -31,7 +31,7 @@ fn pad_segment(
 }
 
 impl Nxo {
-    pub fn new(input: String) -> std::io::Result<Self> {
+    pub fn new(input: &str) -> std::io::Result<Self> {
         let path = PathBuf::from(input);
         let mut file = File::open(path)?;
 

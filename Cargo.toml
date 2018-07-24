@@ -1,13 +1,14 @@
 [package]
-name = "elf2nxo"
-version = "0.1.1"
+name = "linkle"
+version = "0.2.1"
 authors = ["Thog <contact@thog.eu>"]
 license = "MIT/Apache-2.0"
-homepage = "https://github.com/MegatonHammer/elf2nxo/"
-repository = "https://github.com/MegatonHammer/elf2nxo/"
+homepage = "https://github.com/MegatonHammer/linkle/"
+repository = "https://github.com/MegatonHammer/linkle/"
 
 [dependencies]
 elf = "0.0.10"
-byteorder = "1.2.2"
+byteorder = "1.2.3"
 lz4-sys = { git= "https://github.com/Thog/lz4-rs.git"}
 crypto-hash = "0.3.1"
+clap = "2.32.0"
