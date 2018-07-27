@@ -14,8 +14,8 @@ will install this program, by the command name `linkle`.
 
 Creating a NRO file:
 
-    linkle input.elf output.nro
+    linkle nro input.elf output.nro
 
 Creating a NSO file:
 
-    linkle input.elf output.nso nso
+    linkle nso input.elf output.nso

@@ -1,19 +1,23 @@
-use byteorder::{LittleEndian, WriteBytesExt};
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use elf;
 use std;
 use std::fs::File;
+use std::io::Cursor;
+use std::io::Seek;
+use std::io::SeekFrom;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process;
 use utils;
 
 // TODO: options
-pub struct Nxo {
+pub struct NxoFile {
     file: File,
     text_section: elf::types::ProgramHeader,
     rodata_section: elf::types::ProgramHeader,
     data_section: elf::types::ProgramHeader,
     bss_section: Option<elf::types::ProgramHeader>,
+    build_id: Option<Vec<u8>>,
 }
 
 fn pad_segment(
@@ -30,38 +34,58 @@ fn pad_segment(
     }
 }
 
-impl Nxo {
-    pub fn new(input: &str) -> std::io::Result<Self> {
+fn write_build_id<T>(build_id: &Option<Vec<u8>>, output_writter: &mut T) -> std::io::Result<()>
+    where
+        T: Write,
+{
+        match build_id {
+            Some(build_id) => {
+                let mut build_id_data = build_id.clone();
+                if build_id_data.len() > 0x30 {
+                    println!(
+                        "Warning: build-id is too big (0x{:x} > 0x30), the content will be shrink.",
+                        build_id_data.len()
+                    );
+                }
+                build_id_data.resize(0x30, 0);
+                // skip the tag nhdr
+                output_writter.write(&build_id_data[0x10..])?;
+            }
+            None => {
+                output_writter.write(&[0; 0x20])?;
+            }
+        }
+        Ok(())
+}
+
+impl NxoFile {
+    pub fn from_elf(input: &str) -> std::io::Result<Self> {
         let path = PathBuf::from(input);
         let mut file = File::open(path)?;
 
         let elf_file = elf::File::open_stream(&mut file).unwrap();
+
         if elf_file.ehdr.machine != elf::types::EM_AARCH64 {
             println!("Error: Invalid ELF file (expected AArch64 machine)");
             process::exit(1)
         }
 
+        let sections = &elf_file.sections;
         let phdrs: Vec<elf::types::ProgramHeader> = elf_file.phdrs.to_vec();
         let text_section = phdrs.get(0).unwrap_or_else(|| {
             println!("Error: .text not found in ELF file");
             process::exit(1)
         });
 
-        let rodata_section = match phdrs.get(1) {
-            Some(s) => s,
-            None => {
-                println!("Error: .rodata not found in ELF file");
-                process::exit(1)
-            }
-        };
+        let rodata_section = phdrs.get(1).unwrap_or_else(|| {
+            println!("Error: .rodata not found in ELF file");
+            process::exit(1)
+        });
 
-        let data_section = match phdrs.get(2) {
-            Some(s) => s,
-            None => {
-                println!("Error: .data not found in ELF file");
-                process::exit(1)
-            }
-        };
+        let data_section = phdrs.get(2).unwrap_or_else(|| {
+            println!("Error: .data not found in ELF file");
+            process::exit(1)
+        });
 
         let bss_section = match phdrs.get(3) {
             Some(s) => {
@@ -73,12 +97,32 @@ impl Nxo {
             }
             None => None,
         };
-        Ok(Nxo {
+        let build_id = sections
+            .into_iter()
+            .filter(|&x| {
+                match x.shdr.shtype == elf::types::SHT_NOTE {
+                    true => {
+                        let mut data = Cursor::new(x.data.clone());
+                        // Ignore the two first offset of nhdr32
+                        data.seek(SeekFrom::Start(0x8)).unwrap();
+                        let n_type = data.read_u32::<LittleEndian>().unwrap();
+
+                        // BUILD_ID
+                        n_type == 0x3
+                    }
+                    false => false,
+                }
+            }).map(|section| section.data.clone())
+            .next();
+
+
+        Ok(NxoFile {
             file,
             text_section: *text_section,
             rodata_section: *rodata_section,
             data_section: *data_section,
-            bss_section,
+            bss_section: bss_section,
+            build_id: build_id,
         })
     }
 
@@ -171,11 +215,7 @@ impl Nxo {
         // Unknown
         output_writter.write_u32::<LittleEndian>(0)?;
 
-        // TODO: build id .note (not implemented)
-        output_writter.write_u64::<LittleEndian>(0)?;
-        output_writter.write_u64::<LittleEndian>(0)?;
-        output_writter.write_u64::<LittleEndian>(0)?;
-        output_writter.write_u64::<LittleEndian>(0)?;
+        write_build_id(&self.build_id, output_writter)?;
 
         // Padding
         output_writter.write_u64::<LittleEndian>(0)?;
@@ -275,11 +315,7 @@ impl Nxo {
             }
         }
 
-        // TODO: build id .note (not implemented)
-        output_writter.write_u64::<LittleEndian>(0)?;
-        output_writter.write_u64::<LittleEndian>(0)?;
-        output_writter.write_u64::<LittleEndian>(0)?;
-        output_writter.write_u64::<LittleEndian>(0)?;
+        write_build_id(&self.build_id, output_writter)?;
 
         // Compressed size
         output_writter.write_u32::<LittleEndian>(compressed_code_size)?;
