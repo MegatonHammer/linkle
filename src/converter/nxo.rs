@@ -238,9 +238,15 @@ impl NxoFile {
         let text_section = &self.text_section;
         let rodata_section = &self.rodata_section;
         let data_section = &self.data_section;
+
         let mut code = utils::get_section_data(&mut self.file, text_section)?;
         let mut rodata = utils::get_section_data(&mut self.file, rodata_section)?;
         let mut data = utils::get_section_data(&mut self.file, data_section)?;
+
+        // First correctly align to avoid possible compression issues
+        utils::add_padding(&mut code, 0xFFF);
+        utils::add_padding(&mut rodata, 0xFFF);
+        utils::add_padding(&mut data, 0xFFF);
 
         // Because bss doesn't have it's own segment in NSO, we need to pad .data to the .bss vaddr
         match self.bss_section {
@@ -264,36 +270,39 @@ impl NxoFile {
         let mut file_offset = 0x100;
 
         // .text segment
+        let code_size = code.len() as u32;
         let compressed_code = utils::compress(&mut code);
         let compressed_code_size = compressed_code.len() as u32;
         output_writter.write_u32::<LittleEndian>(file_offset as u32)?;
-
         output_writter.write_u32::<LittleEndian>(text_section.vaddr as u32)?;
-        output_writter.write_u32::<LittleEndian>(text_section.filesz as u32)?;
-        // Unknown (offset?)
-        output_writter.write_u32::<LittleEndian>(1)?;
+        output_writter.write_u32::<LittleEndian>(code_size as u32)?;
+
+        // Module offset (TODO: SUPPORT THAT)
+        output_writter.write_u32::<LittleEndian>(0)?;
+
         file_offset += compressed_code_size;
 
         // .rodata segment
+        let rodata_size = rodata.len() as u32;
         let compressed_rodata = utils::compress(&mut rodata);
-
         let compressed_rodata_size = compressed_rodata.len() as u32;
         output_writter.write_u32::<LittleEndian>(file_offset as u32)?;
         output_writter.write_u32::<LittleEndian>(rodata_section.vaddr as u32)?;
-        output_writter.write_u32::<LittleEndian>(rodata_section.filesz as u32)?;
+        output_writter.write_u32::<LittleEndian>(rodata_size as u32)?;
 
-        // Unknown (size?)
-        output_writter.write_u32::<LittleEndian>(1)?;
+        // Module file size (TODO: SUPPORT THAT)
+        output_writter.write_u32::<LittleEndian>(0)?;
+
         file_offset += compressed_rodata_size;
 
         // .data segment
+        let data_size = data.len() as u32;
         let compressed_data = utils::compress(&mut data);
-
         let compressed_data_size = compressed_data.len() as u32;
         let uncompressed_data_size = data.len() as u64;
         output_writter.write_u32::<LittleEndian>(file_offset as u32)?;
         output_writter.write_u32::<LittleEndian>(data_section.vaddr as u32)?;
-        output_writter.write_u32::<LittleEndian>(data_section.filesz as u32)?;
+        output_writter.write_u32::<LittleEndian>(data_size as u32)?;
 
         // BSS size
         match self.bss_section {
