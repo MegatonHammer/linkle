@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::process;
 use utils;
 
-// TODO: options
+// TODO: Support switchbrew's embedded files for NRO
 pub struct NxoFile {
     file: File,
     text_section: elf::types::ProgramHeader,

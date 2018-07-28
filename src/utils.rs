@@ -21,7 +21,6 @@ pub fn get_section_data(
     Ok(data)
 }
 
-// TODO: make compression level configurable
 pub fn compress(uncompressed_data: &mut Vec<u8>) -> Vec<u8> {
     let uncompressed_data_size = uncompressed_data.len() as i32;
     let max_compression_size = unsafe { lz4_sys::LZ4_compressBound(uncompressed_data_size) };
