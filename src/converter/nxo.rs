@@ -1,5 +1,6 @@
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use elf;
+use elf::types::{EM_AARCH64, ProgramHeader, PT_LOAD, SHT_NOTE};
 use std;
 use std::fs::File;
 use std::io::Cursor;
@@ -13,18 +14,14 @@ use utils;
 // TODO: Support switchbrew's embedded files for NRO
 pub struct NxoFile {
     file: File,
-    text_section: elf::types::ProgramHeader,
-    rodata_section: elf::types::ProgramHeader,
-    data_section: elf::types::ProgramHeader,
-    bss_section: Option<elf::types::ProgramHeader>,
+    text_section: ProgramHeader,
+    rodata_section: ProgramHeader,
+    data_section: ProgramHeader,
+    bss_section: Option<ProgramHeader>,
     build_id: Option<Vec<u8>>,
 }
 
-fn pad_segment(
-    previous_segment_data: &mut Vec<u8>,
-    offset: usize,
-    section: &elf::types::ProgramHeader,
-) {
+fn pad_segment(previous_segment_data: &mut Vec<u8>, offset: usize, section: &ProgramHeader) {
     let section_vaddr = section.vaddr as usize;
     let section_supposed_start = previous_segment_data.len() + offset;
 
@@ -35,27 +32,27 @@ fn pad_segment(
 }
 
 fn write_build_id<T>(build_id: &Option<Vec<u8>>, output_writter: &mut T) -> std::io::Result<()>
-    where
-        T: Write,
+where
+    T: Write,
 {
-        match build_id {
-            Some(build_id) => {
-                let mut build_id_data = build_id.clone();
-                if build_id_data.len() > 0x30 {
-                    println!(
-                        "Warning: build-id is too big (0x{:x} > 0x30), the content will be shrink.",
-                        build_id_data.len()
-                    );
-                }
-                build_id_data.resize(0x30, 0);
-                // skip the tag nhdr
-                output_writter.write(&build_id_data[0x10..])?;
+    match build_id {
+        Some(build_id) => {
+            let mut build_id_data = build_id.clone();
+            if build_id_data.len() > 0x30 {
+                println!(
+                    "Warning: build-id is too big (0x{:x} > 0x30), the content will be shrink.",
+                    build_id_data.len()
+                );
             }
-            None => {
-                output_writter.write(&[0; 0x20])?;
-            }
+            build_id_data.resize(0x30, 0);
+            // skip the tag nhdr
+            output_writter.write(&build_id_data[0x10..])?;
         }
-        Ok(())
+        None => {
+            output_writter.write(&[0; 0x20])?;
+        }
+    }
+    Ok(())
 }
 
 impl NxoFile {
@@ -65,13 +62,13 @@ impl NxoFile {
 
         let elf_file = elf::File::open_stream(&mut file).unwrap();
 
-        if elf_file.ehdr.machine != elf::types::EM_AARCH64 {
+        if elf_file.ehdr.machine != EM_AARCH64 {
             println!("Error: Invalid ELF file (expected AArch64 machine)");
             process::exit(1)
         }
 
         let sections = &elf_file.sections;
-        let phdrs: Vec<elf::types::ProgramHeader> = elf_file.phdrs.to_vec();
+        let phdrs: Vec<ProgramHeader> = elf_file.phdrs.to_vec();
         let text_section = phdrs.get(0).unwrap_or_else(|| {
             println!("Error: .text not found in ELF file");
             process::exit(1)
@@ -89,7 +86,7 @@ impl NxoFile {
 
         let bss_section = match phdrs.get(3) {
             Some(s) => {
-                if s.progtype == elf::types::PT_LOAD {
+                if s.progtype == PT_LOAD {
                     Some(*s)
                 } else {
                     None
@@ -100,7 +97,7 @@ impl NxoFile {
         let build_id = sections
             .into_iter()
             .filter(|&x| {
-                match x.shdr.shtype == elf::types::SHT_NOTE {
+                match x.shdr.shtype == SHT_NOTE {
                     true => {
                         let mut data = Cursor::new(x.data.clone());
                         // Ignore the two first offset of nhdr32
@@ -112,9 +109,9 @@ impl NxoFile {
                     }
                     false => false,
                 }
-            }).map(|section| section.data.clone())
+            })
+            .map(|section| section.data.clone())
             .next();
-
 
         Ok(NxoFile {
             file,
