@@ -3,7 +3,7 @@
 # Introduction
 
 This program permits to convert or create various formats used on the Nintendo Switch.
-For now only AArch64 ELF file to a NRO/NSO file is supported.
+For now, it only supports the creation of PFS0/NSP and 64 bits NRO/NSO.
 
 # Installation
 
@@ -19,3 +19,7 @@ Creating a NRO file:
 Creating a NSO file:
 
     linkle nso input.elf output.nso
+
+Creating a PFS0/NSP file:
+
+    linkle pfs0 input_directory output.pfs0

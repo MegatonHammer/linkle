@@ -1,6 +1,7 @@
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use elf;
 use elf::types::{EM_AARCH64, ProgramHeader, PT_LOAD, SHT_NOTE};
+use format::utils;
 use std;
 use std::fs::File;
 use std::io::Cursor;
@@ -9,7 +10,6 @@ use std::io::SeekFrom;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process;
-use utils;
 
 // TODO: Support switchbrew's embedded files for NRO
 pub struct NxoFile {

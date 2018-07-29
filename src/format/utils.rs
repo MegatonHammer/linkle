@@ -6,9 +6,13 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::process;
 
+pub fn align(size: usize, padding: usize) -> usize {
+    ((size as usize) + padding) & !padding
+}
+
 pub fn add_padding(vec: &mut Vec<u8>, padding: usize) -> () {
     let real_size = vec.len();
-    vec.resize(((real_size as usize) + padding) & !padding, 0);
+    vec.resize(align(real_size, padding), 0);
 }
 
 pub fn get_section_data(
