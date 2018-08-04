@@ -1,6 +1,6 @@
 [package]
 name = "linkle"
-version = "0.2.3"
+version = "0.2.4"
 authors = ["Thog <contact@thog.eu>"]
 license = "MIT/Apache-2.0"
 homepage = "https://github.com/MegatonHammer/linkle/"
@@ -8,7 +8,10 @@ repository = "https://github.com/MegatonHammer/linkle/"
 
 [dependencies]
 elf = "0.0.10"
-byteorder = "1.2.3"
+byteorder = "1.2"
 lz4-sys = { git= "https://github.com/Thog/lz4-rs.git"}
-crypto-hash = "0.3.1"
-clap = "2.32.0"
+crypto-hash = "0.3"
+clap = "2.32"
+serde = "1.0"
+serde_derive = "1.0"
+serde_json = "1.0"

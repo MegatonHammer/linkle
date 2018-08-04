@@ -190,7 +190,7 @@ impl NxoFile {
         // BSS size
         match self.bss_section {
             Some(section) => {
-                if section.vaddr != file_offset.into() {
+                if section.vaddr != file_offset as u64 {
                     println!(
                     "Warning: possible misalign bss\n.bss addr: 0x{:x}\nexpected offset: 0x{:x}",
                     section.vaddr, file_offset);

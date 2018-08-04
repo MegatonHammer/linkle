@@ -23,3 +23,56 @@ Creating a NSO file:
 Creating a PFS0/NSP file:
 
     linkle pfs0 input_directory output.pfs0
+
+Creating a NACP file:
+    linkle ncap input.json output.nacp
+
+# NACP input format
+
+This is an example of a compatible JSON:
+
+```json
+{
+    "name": "Link",
+    "author": "Linkle",
+    "version": "1.0.0",
+    "title_id": "0400000000020000",
+    "lang": {
+        "ja": {
+            "name": "リンク",
+            "author": "リンクル"
+        }
+    }
+}
+```
+
+## Fields
+
+NOTE: Every fields are optional
+
+| Field             | Description                                      | Default value       |
+| ----------------- |:------------------------------------------------:| -------------------:|
+| name              | The application name.                            | Unknown Application |
+| author            | The application author.                          | Unknown Author      |
+| version           | The application version.                         | 1.0.0               |
+| title_id          | The application title id.                        | 0000000000000000    |
+| dlc_base_title_id | The base id of all the title DLC.                | title_id + 0x1000   |
+| lang (object)     | Different name/author depending of the language  | use name and author |
+
+| Supported Languages|
+|:------------------:|
+| en-US              |
+| en-UK              |
+| ja                 |
+| fr                 |
+| de                 |
+| es-419             |
+| es                 |
+| it                 |
+| nl                 |
+| fr-CA              |
+| pt                 |
+| ru                 |
+| ko                 |
+| zh-TW              |
+| zh-CN              |

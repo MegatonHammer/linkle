@@ -15,6 +15,13 @@ pub fn add_padding(vec: &mut Vec<u8>, padding: usize) -> () {
     vec.resize(align(real_size, padding), 0);
 }
 
+pub fn check_string_or_truncate(string: &mut String, name: &str, size: usize) {
+    if string.len() >= size {
+        println!("Warning: Truncating {} to 0x{:x}", name, size - 1);
+        string.truncate(size);
+    }
+}
+
 pub fn get_section_data(
     file: &mut File,
     header: &elf::types::ProgramHeader,
