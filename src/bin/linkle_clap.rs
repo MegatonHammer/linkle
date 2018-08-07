@@ -1,27 +1,17 @@
-extern crate byteorder;
 #[macro_use]
 extern crate clap;
-extern crate crypto_hash;
-extern crate elf;
-extern crate lz4_sys;
 
-#[macro_use]
-extern crate serde_derive;
-
-extern crate serde;
-extern crate serde_json;
+extern crate linkle;
 
 use clap::{App, AppSettings, Arg, ArgMatches, SubCommand};
 
 use std::fs::OpenOptions;
 use std::process;
 
-mod format;
-
 fn create_nxo(format: &str, matches: &ArgMatches) -> std::io::Result<()> {
     let input_file = matches.value_of("INPUT_FILE").unwrap();
     let output_file = matches.value_of("OUTPUT_FILE").unwrap();
-    let mut nxo = format::nxo::NxoFile::from_elf(input_file)?;
+    let mut nxo = linkle::format::nxo::NxoFile::from_elf(input_file)?;
     let mut option = OpenOptions::new();
     let output_option = option.write(true).create(true).truncate(true);
     match format {
@@ -34,7 +24,7 @@ fn create_nxo(format: &str, matches: &ArgMatches) -> std::io::Result<()> {
 fn create_pfs0(matches: &ArgMatches) -> std::io::Result<()> {
     let input_directory = matches.value_of("INPUT_DIRECTORY").unwrap();
     let output_file = matches.value_of("OUTPUT_FILE").unwrap();
-    let mut pfs0 = format::pfs0::Pfs0File::from_directory(input_directory)?;
+    let mut pfs0 = linkle::format::pfs0::Pfs0File::from_directory(input_directory)?;
     let mut option = OpenOptions::new();
     let output_option = option.write(true).create(true).truncate(true);
     pfs0.write(&mut output_option.open(output_file)?)?;
@@ -44,7 +34,7 @@ fn create_pfs0(matches: &ArgMatches) -> std::io::Result<()> {
 fn create_nacp(matches: &ArgMatches) -> std::io::Result<()> {
     let input_file = matches.value_of("INPUT_FILE").unwrap();
     let output_file = matches.value_of("OUTPUT_FILE").unwrap();
-    let mut nacp = format::nacp::NacpFile::from_file(input_file)?;
+    let mut nacp = linkle::format::nacp::NacpFile::from_file(input_file)?;
     let mut option = OpenOptions::new();
     let output_option = option.write(true).create(true).truncate(true);
     nacp.write(&mut output_option.open(output_file)?)?;

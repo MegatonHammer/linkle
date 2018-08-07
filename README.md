@@ -7,7 +7,7 @@ For now, it only supports the creation of PFS0/NSP and 64 bits NRO/NSO.
 
 # Installation
 
-Assuming you have `cargo` installed, `cargo install --git https://github.com/MegatonHammer/linkle`
+Assuming you have `cargo` installed, `cargo install --features=binaries --git https://github.com/MegatonHammer/linkle`
 will install this program, by the command name `linkle`.
 
 # Usage

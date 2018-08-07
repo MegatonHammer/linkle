@@ -6,12 +6,20 @@ license = "MIT/Apache-2.0"
 homepage = "https://github.com/MegatonHammer/linkle/"
 repository = "https://github.com/MegatonHammer/linkle/"
 
+[[bin]]
+name = "linkle"
+path = "src/bin/linkle_clap.rs"
+required-features = ["binaries"]
+
 [dependencies]
 elf = "0.0.10"
-byteorder = "1.2"
+byteorder = "1"
 lz4-sys = { git= "https://github.com/Thog/lz4-rs.git"}
-crypto-hash = "0.3"
-clap = "2.32"
-serde = "1.0"
-serde_derive = "1.0"
-serde_json = "1.0"
+clap = {version = "2", optional = true}
+sha2 = "0.7.1"
+serde = "1"
+serde_derive = "1"
+serde_json = "1"
+
+[features]
+binaries = ["clap"]

@@ -1,10 +1,10 @@
-use crypto_hash::{Algorithm, Hasher};
 use elf;
 use lz4_sys;
 use std;
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{Read, Seek, SeekFrom};
 use std::process;
+use sha2::{Sha256, Digest};
 
 pub fn align(size: usize, padding: usize) -> usize {
     ((size as usize) + padding) & !padding
@@ -32,7 +32,7 @@ pub fn get_section_data(
     Ok(data)
 }
 
-pub fn compress(uncompressed_data: &mut Vec<u8>) -> Vec<u8> {
+fn compress_lz4_unsafe(uncompressed_data: &mut Vec<u8>) -> Vec<u8> {
     let uncompressed_data_size = uncompressed_data.len() as i32;
     let max_compression_size = unsafe { lz4_sys::LZ4_compressBound(uncompressed_data_size) };
 
@@ -58,8 +58,12 @@ pub fn compress(uncompressed_data: &mut Vec<u8>) -> Vec<u8> {
     }
 }
 
+pub fn compress_lz4(uncompressed_data: &mut Vec<u8>) -> Vec<u8> {
+    compress_lz4_unsafe(uncompressed_data)
+}
+
 pub fn calculate_sha256(data: &Vec<u8>) -> std::io::Result<Vec<u8>> {
-    let mut hasher = Hasher::new(Algorithm::SHA256);
-    hasher.write(data)?;
-    Ok(hasher.finish())
+    let mut hasher = Sha256::default();
+    hasher.input(data);
+    Ok(Vec::from(hasher.result().as_slice()))
 }
