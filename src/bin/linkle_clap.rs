@@ -41,6 +41,16 @@ fn create_nacp(matches: &ArgMatches) -> std::io::Result<()> {
     Ok(())
 }
 
+fn create_romfs(matches: &ArgMatches) -> std::io::Result<()> {
+    let input_directory = matches.value_of("INPUT_DIRECTORY").unwrap();
+    let output_file = matches.value_of("OUTPUT_FILE").unwrap();
+    let mut romfs = linkle::format::romfs::RomFs::from_directory(input_directory)?;
+    let mut option = OpenOptions::new();
+    let output_option = option.write(true).create(true).truncate(true);
+    romfs.write(&mut output_option.open(output_file)?)?;
+    Ok(())
+}
+
 fn process_args(app: App) -> () {
     let matches = app.get_matches();
 
@@ -49,6 +59,7 @@ fn process_args(app: App) -> () {
         ("nso", Some(sub_matches)) => create_nxo("nso", sub_matches),
         ("pfs0", Some(sub_matches)) => create_pfs0(sub_matches),
         ("nacp", Some(sub_matches)) => create_nacp(sub_matches),
+        ("romfs", Some(sub_matches)) => create_romfs(sub_matches),
         _ => process::exit(1),
     };
 
@@ -85,10 +96,13 @@ fn main() {
             SubCommand::with_name("pfs0")
                 .alias("nsp")
                 .about("Create a PFS0/NSP file from a directory")
-                .args(&vec![input_directory_arg, output_file_arg.clone()]),
+                .args(&vec![input_directory_arg.clone(), output_file_arg.clone()]),
             SubCommand::with_name("nacp")
                 .about("Create a NACP file from a JSON file")
                 .args(&vec![input_file_arg.clone(), output_file_arg.clone()]),
+            SubCommand::with_name("romfs")
+                .about("Create a RomFS file from a directory")
+                .args(&vec![input_directory_arg.clone(), output_file_arg.clone()]),
         ]);
     process_args(app);
 }
