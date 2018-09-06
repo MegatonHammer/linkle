@@ -7,20 +7,6 @@ use std::path::PathBuf;
 use byteorder::{WriteBytesExt, LE};
 
 #[derive(Debug)]
-struct RomFsHdr {
-    header_size: u64,
-    dir_hash_table_offset: u64,
-    dir_hash_table_size: u64,
-    dir_meta_table_offset: u64,
-    dir_meta_table_size: u64,
-    file_hash_table_offset: u64,
-    file_hash_table_size: u64,
-    file_meta_table_offset: u64,
-    file_meta_table_size: u64,
-    data_offset: u64,
-}
-
-#[derive(Debug)]
 struct RomFsDirEntCtx {
     system_path: PathBuf,
     name: String,
@@ -125,7 +111,6 @@ impl RomFsCtx {
             let path = parent_dir.borrow().system_path.clone();
 
             let cur_dir_idx = ctx.dirs.len();
-            let cur_file_idx = ctx.files.len();
 
             for entry in fs::read_dir(path)? {
                 let entry = entry?;
@@ -162,9 +147,9 @@ impl RomFsCtx {
                     ctx.file_table_size += mem::size_of::<RomFsFileEntryHdr>() as u64 + align64(file.borrow().name.len() as u64, 4);
 
                 } else if file_type.is_symlink() {
-                    panic!("Can't handle symlinks in romfs: {:?}", entry.path());
+                    Err(io::Error::new(io::ErrorKind::Other, format!("Can't handle symlinks in romfs: {}", entry.path().to_string_lossy())))?;
                 } else {
-                    panic!("Unknown file type at {:?}", entry.path());
+                    Err(io::Error::new(io::ErrorKind::Other, format!("Unknown file type at {}", entry.path().to_string_lossy())))?;
                 }
             }
             parent_dir.borrow_mut().child.sort_by_key(|v| v.borrow().name.clone());

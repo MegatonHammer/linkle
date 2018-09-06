@@ -44,7 +44,7 @@ fn create_nacp(matches: &ArgMatches) -> std::io::Result<()> {
 fn create_romfs(matches: &ArgMatches) -> std::io::Result<()> {
     let input_directory = matches.value_of("INPUT_DIRECTORY").unwrap();
     let output_file = matches.value_of("OUTPUT_FILE").unwrap();
-    let mut romfs = linkle::format::romfs::RomFs::from_directory(input_directory)?;
+    let romfs = linkle::format::romfs::RomFs::from_directory(input_directory)?;
     let mut option = OpenOptions::new();
     let output_option = option.write(true).create(true).truncate(true);
     romfs.write(&mut output_option.open(output_file)?)?;
