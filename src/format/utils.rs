@@ -1,5 +1,5 @@
 use elf;
-use lz4_sys;
+use lz4;
 use std;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -32,34 +32,8 @@ pub fn get_section_data(
     Ok(data)
 }
 
-fn compress_lz4_unsafe(uncompressed_data: &mut Vec<u8>) -> Vec<u8> {
-    let uncompressed_data_size = uncompressed_data.len() as i32;
-    let max_compression_size = unsafe { lz4_sys::LZ4_compressBound(uncompressed_data_size) };
-
-    // Create res vector and make sure the max memory needed is availaible
-    let mut res: Vec<u8> = Vec::new();
-    res.resize(max_compression_size as usize, 0);
-
-    let res_code = unsafe {
-        lz4_sys::LZ4_compress_default(
-            uncompressed_data.as_mut_ptr(),
-            res.as_mut_ptr(),
-            uncompressed_data_size,
-            max_compression_size,
-        )
-    };
-
-    if res_code <= 0 {
-        println!("Error: LZ4 compression function returned {}", res_code);
-        process::exit(1)
-    } else {
-        res.resize(res_code as usize, 0);
-        res
-    }
-}
-
-pub fn compress_lz4(uncompressed_data: &mut Vec<u8>) -> Vec<u8> {
-    compress_lz4_unsafe(uncompressed_data)
+pub fn compress_lz4(uncompressed_data: &mut Vec<u8>) -> std::io::Result<Vec<u8>> {
+    lz4::block::compress(&mut uncompressed_data[..], None, false)
 }
 
 pub fn calculate_sha256(data: &Vec<u8>) -> std::io::Result<Vec<u8>> {
