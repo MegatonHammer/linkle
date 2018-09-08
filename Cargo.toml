@@ -14,7 +14,7 @@ required-features = ["binaries"]
 [dependencies]
 elf = "0.0.10"
 byteorder = "1"
-lz4-sys = { git= "https://github.com/Thog/lz4-rs.git"}
+lz4 = { git = "https://github.com/bozaro/lz4-rs.git"}
 clap = {version = "2", optional = true}
 sha2 = "0.7.1"
 serde = "1"

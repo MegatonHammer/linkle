@@ -61,9 +61,53 @@ impl RomFsDirEntCtx {
     }
 }
 
+// From https://www.3dbrew.org/wiki/RomFS
+// The size of the table is dependent on the number of entries in the relevant
+// MetaData table (it's probably intended to always be the smallest prime number
+// greater than or equal to the number of entries, but the implementation was
+// lazy)
+fn romfs_get_hash_table_count(mut num_entries: usize) -> usize {
+    if num_entries < 3 {
+        3
+    } else if num_entries < 19 {
+        num_entries | 1
+    } else {
+        while num_entries % 2 == 0 || num_entries % 3 == 0 ||
+            num_entries % 5 == 0 || num_entries % 7 == 0 ||
+            num_entries % 11 == 0 || num_entries % 13 == 0 ||
+            num_entries % 17 == 0 {
+            num_entries += 1;
+        }
+        num_entries
+    }
+}
+
+fn align32(offset: u32, align: u32) -> u32 {
+    let mask = !(align - 1);
+    (offset + (align - 1)) & mask
+}
+
+fn align64(offset: u64, align: u64) -> u64 {
+    let mask = !(align - 1);
+    (offset + (align - 1)) & mask
+}
+
+fn calc_path_hash(parent: u32, path: &str) -> u32 {
+    // Magic algorithm. This likely comes straight from RE'd come from nintendo.
+    let mut hash = parent ^ 123456789;
+    for c in path.as_bytes() {
+        hash = (hash >> 5) | (hash << 27);
+        hash ^= *c as u32;
+    }
+    hash
+}
+
+// TODO: why 0x200???
+const ROMFS_FILEPARTITION_OFS: u64 = 0x200;
+
 /// A graph of directories, and various metadata associated to it.
 #[derive(Debug)]
-struct RomFsCtx {
+pub struct RomFs {
     dirs: Vec<Rc<RefCell<RomFsDirEntCtx>>>,
     files: Vec<Rc<RefCell<RomFsFileEntCtx>>>,
     dir_table_size: u64,
@@ -71,8 +115,8 @@ struct RomFsCtx {
     file_partition_size: u64,
 }
 
-impl RomFsCtx {
-    fn visit_dir(path: PathBuf) -> io::Result<RomFsCtx> {
+impl RomFs {
+    pub fn from_directory(path: &str) -> io::Result<RomFs> {
         // Stack of directories to visit. We'll iterate over it. When finding
         // new directories, we'll push them to this stack, so that iteration may
         // continue. This avoids doing recursive functions (which runs the risk
@@ -82,7 +126,7 @@ impl RomFsCtx {
         // First, let's create our root folder. We'll want the parent to be
         // itself, so let's first set it to an unbound Weak, and set it to itself
         // after creation.
-        let root_folder = RomFsDirEntCtx::new(Weak::new(), path);
+        let root_folder = RomFsDirEntCtx::new(Weak::new(), PathBuf::from(path));
         {
             let mut root_folder_borrow = root_folder.borrow_mut();
 
@@ -94,13 +138,13 @@ impl RomFsCtx {
         // Let's build our context. This will be returned. It contains the graph
         // of files/directories, and some meta-information that will be used to
         // write the romfs file afterwards.
-        let mut ctx = RomFsCtx {
+        let mut ctx = RomFs {
             dirs: vec![],
             files: vec![],
             // We have the root dir already.
             dir_table_size: mem::size_of::<RomFsDirEntryHdr>() as u64, // Root Dir
             file_table_size: 0,
-            file_partition_size: 0
+            file_partition_size: 0,
         };
 
         // Let's start iterating.
@@ -159,87 +203,17 @@ impl RomFsCtx {
 
         ctx.files.sort_by_key(|v| v.borrow().system_path.to_string_lossy().into_owned());
 
-        Ok(ctx)
-    }
-}
-
-// From https://www.3dbrew.org/wiki/RomFS
-// The size of the table is dependent on the number of entries in the relevant
-// MetaData table (it's probably intended to always be the smallest prime number
-// greater than or equal to the number of entries, but the implementation was
-// lazy)
-fn romfs_get_hash_table_count(mut num_entries: usize) -> usize {
-    if num_entries < 3 {
-        3
-    } else if num_entries < 19 {
-        num_entries | 1
-    } else {
-        while num_entries % 2 == 0 || num_entries % 3 == 0 ||
-            num_entries % 5 == 0 || num_entries % 7 == 0 ||
-            num_entries % 11 == 0 || num_entries % 13 == 0 ||
-            num_entries % 17 == 0 {
-            num_entries += 1;
-        }
-        num_entries
-    }
-}
-
-fn align32(offset: u32, align: u32) -> u32 {
-    let mask = !(align - 1);
-    (offset + (align - 1)) & mask
-}
-
-fn align64(offset: u64, align: u64) -> u64 {
-    let mask = !(align - 1);
-    (offset + (align - 1)) & mask
-}
-
-fn calc_path_hash(parent: u32, path: &str) -> u32 {
-    // Magic algorithm. This likely comes straight from RE'd come from nintendo.
-    let mut hash = parent ^ 123456789;
-    for c in path.as_bytes() {
-        hash = (hash >> 5) | (hash << 27);
-        hash ^= *c as u32;
-    }
-    hash
-}
-
-pub struct RomFs {
-    folder: PathBuf
-}
-
-impl RomFs {
-    pub fn from_directory(folder: &str) -> io::Result<RomFs> {
-        Ok(RomFs {
-            folder: PathBuf::from(folder)
-        })
-    }
-
-    pub fn write(&self, to: &mut Write) -> io::Result<()> {
-        println!("Visiting directories...");
-        let mut romfs_ctx = RomFsCtx::visit_dir(self.folder.clone())?;
-
-        const ROMFS_ENTRY_EMPTY: u32 = 0xFFFFFFFF;
-
-        let mut dir_hash_table = vec![ROMFS_ENTRY_EMPTY; romfs_get_hash_table_count(romfs_ctx.dirs.len())];
-        let mut file_hash_table = vec![ROMFS_ENTRY_EMPTY; romfs_get_hash_table_count(romfs_ctx.files.len())];
-
-        let mut dir_table = vec![0u8; romfs_ctx.dir_table_size as usize];
-        let mut file_table = vec![0u8; romfs_ctx.file_table_size as usize];
-
-        println!("Calculating metadata...");
-
         // Calculate file offset and file partition size.
         let mut entry_offset = 0;
-        for file in romfs_ctx.files.iter_mut() {
+        for file in ctx.files.iter_mut() {
             // Files have to start aligned at 0x10. We do this at the start to
             // avoid useless padding after the last file.
-            romfs_ctx.file_partition_size = align64(romfs_ctx.file_partition_size, 0x10);
+            ctx.file_partition_size = align64(ctx.file_partition_size, 0x10);
 
             // Update the data section size and set the file offset in the data
             // section.
-            file.borrow_mut().offset = romfs_ctx.file_partition_size;
-            romfs_ctx.file_partition_size += file.borrow().size;
+            file.borrow_mut().offset = ctx.file_partition_size;
+            ctx.file_partition_size += file.borrow().size;
 
             // Set the file offset in the file table section.
             file.borrow_mut().entry_offset = entry_offset;
@@ -248,13 +222,33 @@ impl RomFs {
 
         // Calculate directory offsets.
         let mut entry_offset = 0;
-        for dir in romfs_ctx.dirs.iter_mut() {
+        for dir in ctx.dirs.iter_mut() {
             dir.borrow_mut().entry_offset = entry_offset;
             entry_offset += mem::size_of::<RomFsDirEntryHdr>() as u32 + align32(dir.borrow().name.len() as u32, 4);
         }
 
+        Ok(ctx)
+    }
+
+    pub fn len(&self) -> usize {
+        (align64(ROMFS_FILEPARTITION_OFS + self.file_partition_size, 4) +
+            romfs_get_hash_table_count(self.dirs.len() * mem::size_of::<u32>())  as u64 +
+            self.dir_table_size +
+            romfs_get_hash_table_count(self.files.len() * mem::size_of::<u32>()) as u64 +
+            self.file_table_size) as usize
+    }
+
+    pub fn write(&self, to: &mut Write) -> io::Result<()> {
+        const ROMFS_ENTRY_EMPTY: u32 = 0xFFFFFFFF;
+
+        let mut dir_hash_table = vec![ROMFS_ENTRY_EMPTY; romfs_get_hash_table_count(self.dirs.len())];
+        let mut file_hash_table = vec![ROMFS_ENTRY_EMPTY; romfs_get_hash_table_count(self.files.len())];
+
+        let mut dir_table = vec![0u8; self.dir_table_size as usize];
+        let mut file_table = vec![0u8; self.file_table_size as usize];
+
         // Populate file tables
-        for file in romfs_ctx.files.iter() {
+        for file in self.files.iter() {
             let orig_file = file;
             let file = file.borrow();
             let parent = file.parent.upgrade().unwrap();
@@ -276,7 +270,7 @@ impl RomFs {
         }
 
         // Populate dir tables
-        for dir in romfs_ctx.dirs.iter() {
+        for dir in self.dirs.iter() {
             let dir = dir.borrow();
             let parent = dir.parent.upgrade().unwrap();
             let parent = parent.borrow();
@@ -297,12 +291,9 @@ impl RomFs {
         }
 
         // Write the header
-        // TODO: why 0x200???
-        const ROMFS_FILEPARTITION_OFS: u64 = 0x200;
-
         to.write_u64::<LE>(80)?; // Size of header
 
-        let cur_ofs = align64(ROMFS_FILEPARTITION_OFS + romfs_ctx.file_partition_size, 4);
+        let cur_ofs = align64(ROMFS_FILEPARTITION_OFS + self.file_partition_size, 4);
         to.write_u64::<LE>(cur_ofs)?; // dir_hash_table_ofs
         to.write_u64::<LE>((dir_hash_table.len() * mem::size_of::<u32>()) as u64)?; // dir_hash_table_size
 
@@ -325,7 +316,7 @@ impl RomFs {
 
         let mut cur_ofs = 0x200;
 
-        for file in romfs_ctx.files.iter() {
+        for file in self.files.iter() {
             // Files have to start aligned at 0x10. We do this at the start to
             // avoid useless padding after the last file.
             let new_cur_ofs = align64(cur_ofs, 0x10);
@@ -346,7 +337,7 @@ impl RomFs {
         let cur_ofs = new_cur_ofs;
 
         // Write dir hash table
-        assert_eq!(cur_ofs, align64(ROMFS_FILEPARTITION_OFS + romfs_ctx.file_partition_size, 4));
+        assert_eq!(cur_ofs, align64(ROMFS_FILEPARTITION_OFS + self.file_partition_size, 4));
         for hash in dir_hash_table {
             to.write_u32::<LE>(hash)?;
         }
