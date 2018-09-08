@@ -1,7 +1,7 @@
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use elf;
 use elf::types::{EM_AARCH64, ProgramHeader, PT_LOAD, SHT_NOTE};
-use format::utils;
+use format::{utils, romfs::RomFs};
 use std;
 use std::fs::File;
 use std::io::Cursor;
@@ -123,7 +123,7 @@ impl NxoFile {
         })
     }
 
-    pub fn write_nro<T>(&mut self, output_writter: &mut T) -> std::io::Result<()>
+    pub fn write_nro<T>(&mut self, output_writter: &mut T, romfs: Option<&str>) -> std::io::Result<()>
     where
         T: Write,
     {
@@ -225,6 +225,23 @@ impl NxoFile {
         output_writter.write(&code[0x80..])?;
         output_writter.write(&rodata)?;
         output_writter.write(&data)?;
+
+        // Aset handling
+        if let Some(romfs) = romfs {
+            output_writter.write_all(b"ASET")?;
+            output_writter.write_u32::<LittleEndian>(0)?; // version
+
+            output_writter.write_u64::<LittleEndian>(0)?; // Icon
+            output_writter.write_u64::<LittleEndian>(0)?;
+
+            output_writter.write_u64::<LittleEndian>(0)?; // NACP
+            output_writter.write_u64::<LittleEndian>(0)?;
+
+            let romfs = RomFs::from_directory(romfs)?;
+            output_writter.write_u64::<LittleEndian>(total_len as u64 + 8 + 16 + 16 + 16)?; // RomFs
+            output_writter.write_u64::<LittleEndian>(romfs.len() as u64)?;
+            romfs.write(output_writter)?;
+        }
         Ok(())
     }
 

@@ -11,11 +11,12 @@ use std::process;
 fn create_nxo(format: &str, matches: &ArgMatches) -> std::io::Result<()> {
     let input_file = matches.value_of("INPUT_FILE").unwrap();
     let output_file = matches.value_of("OUTPUT_FILE").unwrap();
+    let romfs_dir = matches.value_of("ROMFS_PATH");
     let mut nxo = linkle::format::nxo::NxoFile::from_elf(input_file)?;
     let mut option = OpenOptions::new();
     let output_option = option.write(true).create(true).truncate(true);
     match format {
-        "nro" => nxo.write_nro(&mut output_option.open(output_file)?),
+        "nro" => nxo.write_nro(&mut output_option.open(output_file, romfs_dir)?),
         "nso" => nxo.write_nso(&mut output_option.open(output_file)?),
         _ => process::exit(1),
     }
@@ -79,6 +80,11 @@ fn main() {
     let input_file_arg = Arg::with_name("INPUT_FILE")
         .help("Sets the input file to use")
         .required(true);
+    let romfs_arg = Arg::with_name("ROMFS_PATH")
+        .long("romfs-path")
+        .takes_value(true)
+        .value_name("ROMFS_PATH")
+        .help("Sets the directory to use as RomFs when bundling into an NRO");
     let output_file_arg = Arg::with_name("OUTPUT_FILE")
         .help("Sets the output file to use")
         .required(true);
@@ -89,7 +95,7 @@ fn main() {
         .subcommands(vec![
             SubCommand::with_name("nro")
                 .about("Create a NRO file from an ELF file")
-                .args(&vec![input_file_arg.clone(), output_file_arg.clone()]),
+                .args(&vec![input_file_arg.clone(), output_file_arg.clone(), romfs_arg]),
             SubCommand::with_name("nso")
                 .about("Create a NSO file from an ELF file")
                 .args(&vec![input_file_arg.clone(), output_file_arg.clone()]),
