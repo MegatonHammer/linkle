@@ -16,7 +16,7 @@ fn create_nxo(format: &str, matches: &ArgMatches) -> std::io::Result<()> {
     let mut option = OpenOptions::new();
     let output_option = option.write(true).create(true).truncate(true);
     match format {
-        "nro" => nxo.write_nro(&mut output_option.open(output_file, romfs_dir)?),
+        "nro" => nxo.write_nro(&mut output_option.open(output_file)?, romfs_dir),
         "nso" => nxo.write_nso(&mut output_option.open(output_file)?),
         _ => process::exit(1),
     }
