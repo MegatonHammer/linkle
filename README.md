@@ -3,12 +3,14 @@
 # Introduction
 
 This program permits to convert or create various formats used on the Nintendo Switch.
-For now, it only supports the creation of PFS0/NSP and 64 bits NRO/NSO.
+For now, it only supports the creation of PFS0/NSP and 64 bits NRO/NSO. It can also
+be used with cargo through `cargo nro` to simplify the build process of Megaton-Hammer
+homebrew.
 
 # Installation
 
 Assuming you have `cargo` installed, `cargo install --features=binaries --git https://github.com/MegatonHammer/linkle`
-will install this program, by the command name `linkle`.
+will install this program, by the command name `linkle` and the `cargo nro` subcommand.
 
 # Usage
 
@@ -25,7 +27,12 @@ Creating a PFS0/NSP file:
     linkle pfs0 input_directory output.pfs0
 
 Creating a NACP file:
+
     linkle ncap input.json output.nacp
+
+Compiling and creating an NRO file (requires xargo from https://github.com/roblabla/xargo installed):
+
+    cargo nro
 
 # NACP input format
 
