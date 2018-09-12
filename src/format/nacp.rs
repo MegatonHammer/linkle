@@ -2,8 +2,6 @@ use byteorder::{LittleEndian, WriteBytesExt};
 use format::utils;
 use std;
 use std::fs::File;
-use std::io::Seek;
-use std::io::SeekFrom;
 use std::io::Write;
 
 use serde_json;
@@ -72,23 +70,28 @@ impl NacpFile {
         lang_entry: &NacpLangEntry,
     ) -> std::io::Result<()>
     where
-        T: Write + Seek,
+        T: Write,
     {
         let name = &lang_entry.name;
-        let name_padding = 0x200 - name.len() as i64;
+        let name_padding = 0x200 - name.len();
         output_writter.write(name.as_bytes())?;
-        output_writter.seek(SeekFrom::Current(name_padding))?;
+        output_writter.write(&vec![0; name_padding])?;
 
         let author = &lang_entry.author;
-        let author_padding = 0x100 - author.len() as i64;
+        let author_padding = 0x100 - author.len();
         output_writter.write(author.as_bytes())?;
-        output_writter.seek(SeekFrom::Current(author_padding))?;
+        output_writter.write(&vec![0; author_padding])?;
         Ok(())
+    }
+
+    /// The size in bytes of this entry once serialized.
+    pub fn len(&self) -> usize {
+        0x4000
     }
 
     pub fn write<T>(&mut self, output_writter: &mut T) -> std::io::Result<()>
     where
-        T: Write + Seek,
+        T: Write,
     {
         let mut name = self
             .name
@@ -239,7 +242,7 @@ impl NacpFile {
         }
 
         // 0x3000 - 0x3038: Unknown
-        output_writter.seek(SeekFrom::Start(0x3038))?;
+        output_writter.write(&[0; 0x38])?;
 
         output_writter.write_u64::<LittleEndian>(title_id)?;
 
@@ -249,24 +252,24 @@ impl NacpFile {
         output_writter.write(&unknown)?;
 
         // Version string part (probably UTF8)
-        let version_padding = 0x10 - version.len() as i64;
+        let version_padding = 0x10 - version.len();
         output_writter.write(version.as_bytes())?;
-        output_writter.seek(SeekFrom::Current(version_padding))?;
+        output_writter.write(&vec![0; version_padding])?;
 
         output_writter.write_u64::<LittleEndian>(dlc_base_title_id)?;
         output_writter.write_u64::<LittleEndian>(title_id)?;
 
         //  0x3080 - 0x30B0: Unknown
-        output_writter.seek(SeekFrom::Current(0x30))?;
+        output_writter.write(&[0; 0x30])?;
 
         output_writter.write_u64::<LittleEndian>(title_id)?;
 
         // title id array (0x7 entries), only write the base, other entries seems to be for update titles
         output_writter.write_u64::<LittleEndian>(title_id)?;
-        output_writter.seek(SeekFrom::Current(0x30))?;
+        output_writter.write(&[0; 0x30])?;
 
         // 0x30F0 - 0x30F8: Unknown
-        output_writter.seek(SeekFrom::Current(0x8))?;
+        output_writter.write_u64::<LittleEndian>(0)?;
         output_writter.write_u64::<LittleEndian>(title_id)?;
 
         let mut end_of_file = Vec::new();

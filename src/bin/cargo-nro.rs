@@ -13,7 +13,7 @@ use std::fmt;
 use std::process::{Command, Stdio};
 use std::path::{Path, PathBuf};
 use std::fs::File;
-use linkle::format::nxo::NxoFile;
+use linkle::format::{nxo::NxoFile, nacp::NacpFile};
 use cargo_metadata::Message;
 use clap::{Arg, App};
 
@@ -106,14 +106,34 @@ fn main() {
             Ok(Message::CompilerArtifact(ref artifact)) if artifact.target.kind[0] == "bin" => {
                 // Find the artifact's source. This is not going to be pretty.
                 let src = Path::new(&artifact.target.src_path);
-                let mut romfs = None;
                 let root = find_project_root(&src).unwrap();
-                if root.join("res").is_dir() {
-                    romfs = Some(root.join("res").to_string_lossy().into_owned());
-                }
+                let romfs = if root.join("res").is_dir() {
+                    Some(root.join("res").to_string_lossy().into_owned())
+                } else {
+                    None
+                };
+
+                let icon_file = if root.join("icon.jpeg").is_dir() {
+                    Some(root.join("res").to_string_lossy().into_owned())
+                } else {
+                    None
+                };
+
+                let nacp_file = if root.join("Control.json").is_dir() {
+                    let nacp_path = root.join("Control.json").to_string_lossy().into_owned();
+                    Some(NacpFile::from_file(&nacp_path).unwrap())
+                } else {
+                    None
+                };
+
                 let mut new_name = PathBuf::from(artifact.filenames[0].clone());
                 assert!(new_name.set_extension("nro"));
-                NxoFile::from_elf(&artifact.filenames[0]).unwrap().write_nro(&mut File::create(new_name.clone()).unwrap(), romfs.as_ref().map(|v| v.as_ref())).unwrap();
+                NxoFile::from_elf(&artifact.filenames[0]).unwrap()
+                    .write_nro(&mut File::create(new_name.clone()).unwrap(),
+                               romfs.as_ref().map(|v| v.as_ref()),
+                               icon_file.as_ref().map(|v| v.as_ref()),
+                               nacp_file
+                               ).unwrap();
                 println!("Built {} (using {:?} as romfs)", new_name.to_string_lossy(), romfs);
             },
             Ok(Message::CompilerArtifact(_artifact)) => {

@@ -1,14 +1,11 @@
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use elf;
 use elf::types::{EM_AARCH64, ProgramHeader, PT_LOAD, SHT_NOTE};
-use format::{utils, romfs::RomFs};
+use format::{utils, romfs::RomFs, nacp::NacpFile};
 use std;
 use std::fs::File;
-use std::io::Cursor;
-use std::io::Seek;
-use std::io::SeekFrom;
-use std::io::Write;
-use std::path::PathBuf;
+use std::io::{self, Cursor, Seek, SeekFrom, Write};
+use std::path::{Path, PathBuf};
 use std::process;
 
 // TODO: Support switchbrew's embedded files for NRO
@@ -123,7 +120,7 @@ impl NxoFile {
         })
     }
 
-    pub fn write_nro<T>(&mut self, output_writter: &mut T, romfs: Option<&str>) -> std::io::Result<()>
+    pub fn write_nro<T>(&mut self, output_writter: &mut T, romfs: Option<&str>, icon: Option<&str>, nacp: Option<NacpFile>) -> std::io::Result<()>
     where
         T: Write,
     {
@@ -226,20 +223,66 @@ impl NxoFile {
         output_writter.write(&rodata)?;
         output_writter.write(&data)?;
 
+        // Early return if there's no need for an ASET section.
+        match (&icon, &romfs, &nacp) {
+            (None, None, None) => return Ok(()),
+            _ => ()
+        }
+
         // Aset handling
-        if let Some(romfs) = romfs {
-            output_writter.write_all(b"ASET")?;
-            output_writter.write_u32::<LittleEndian>(0)?; // version
+        output_writter.write_all(b"ASET")?;
+        output_writter.write_u32::<LittleEndian>(0)?; // version
 
-            output_writter.write_u64::<LittleEndian>(0)?; // Icon
+        // Offset to the next available region.
+        let mut offset = total_len as u64 + 8 + 16 + 16 + 16;
+
+        let icon_len = if let Some(icon) = &icon {
+            // TODO: Check if icon is a 256x256 JPEG. Convert it if it isn't?
+            let icon_len = Path::new(icon).metadata()?.len();
+            output_writter.write_u64::<LittleEndian>(offset)?;
+            output_writter.write_u64::<LittleEndian>(icon_len)?;
+            icon_len
+        } else {
             output_writter.write_u64::<LittleEndian>(0)?;
-
-            output_writter.write_u64::<LittleEndian>(0)?; // NACP
             output_writter.write_u64::<LittleEndian>(0)?;
+            0
+        };
 
+        offset += icon_len;
+
+        let nacp_len = if let Some(nacp) = &nacp {
+            let nacp_len = nacp.len() as u64;
+            output_writter.write_u64::<LittleEndian>(offset)?;
+            output_writter.write_u64::<LittleEndian>(nacp_len)?;
+            nacp_len
+        } else {
+            output_writter.write_u64::<LittleEndian>(0)?;
+            output_writter.write_u64::<LittleEndian>(0)?;
+            0
+        };
+
+        offset += nacp_len;
+
+        let romfs = if let Some(romfs) = &romfs {
             let romfs = RomFs::from_directory(romfs)?;
-            output_writter.write_u64::<LittleEndian>(total_len as u64 + 8 + 16 + 16 + 16)?; // RomFs
+            output_writter.write_u64::<LittleEndian>(offset)?;
             output_writter.write_u64::<LittleEndian>(romfs.len() as u64)?;
+            Some(romfs)
+        } else {
+            output_writter.write_u64::<LittleEndian>(0)?;
+            output_writter.write_u64::<LittleEndian>(0)?;
+            None
+        };
+
+        if let Some(icon) = icon {
+            assert_eq!(io::copy(&mut File::open(icon)?, output_writter)?, icon_len, "Icon changed while building.");
+        }
+
+        if let Some(mut nacp) = nacp {
+            nacp.write(output_writter)?;
+        }
+
+        if let Some(romfs) = romfs {
             romfs.write(output_writter)?;
         }
         Ok(())
