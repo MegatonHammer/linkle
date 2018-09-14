@@ -177,7 +177,9 @@ fn main() {
                 nacp.name.get_or_insert(package.name);
                 nacp.author.get_or_insert(package.authors[0].clone());
                 nacp.version.get_or_insert(package.version);
-                nacp.title_id.get_or_insert(package.title_id);
+                if nacp.title_id.is_none() {
+                    nacp.title_id = target_metadata.title_id;
+                }
 
                 let mut new_name = PathBuf::from(artifact.filenames[0].clone());
                 assert!(new_name.set_extension("nro"));
