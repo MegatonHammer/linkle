@@ -1,6 +1,6 @@
 #[macro_use]
 extern crate clap;
-
+extern crate url;
 extern crate linkle;
 extern crate serde;
 extern crate serde_json;
@@ -9,13 +9,13 @@ extern crate serde_derive;
 extern crate cargo_metadata;
 
 use std::env::{self, VarError};
-use std::fmt;
 use std::process::{Command, Stdio};
 use std::path::{Path, PathBuf};
 use std::fs::File;
-use linkle::format::nxo::NxoFile;
-use cargo_metadata::Message;
+use linkle::format::{nxo::NxoFile, nacp::NacpFile};
+use cargo_metadata::{Package, Message};
 use clap::{Arg, App};
+use url::Url;
 
 fn find_project_root(path: &Path) -> Option<&Path> {
     for parent in path.ancestors() {
@@ -62,6 +62,21 @@ const CARGO_OPTIONS: &'static str = "CARGO OPTIONS:
     -h, --help                      Prints help information";
 
 
+fn get_metadata(manifest_path: &Path, package_id: &str, target_name: &str) -> (Package, PackageMetadata) {
+    let metadata = cargo_metadata::metadata(Some(&manifest_path)).unwrap();
+    let package = metadata.packages.into_iter().find(|v| v.id == package_id).unwrap();
+    let package_metadata = serde_json::from_value(package.metadata.pointer(&format!("linkle/{}", target_name)).cloned().unwrap_or(serde_json::Value::Null)).unwrap_or(PackageMetadata::default());
+    (package, package_metadata)
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+struct PackageMetadata {
+    romfs: Option<String>,
+    nacp: Option<NacpFile>,
+    icon: Option<String>,
+    title_id: Option<String>
+}
+
 fn main() {
     let args = if env::args().nth(1) == Some("nro".to_string()) {
         // Skip the subcommand when running through cargo
@@ -105,16 +120,75 @@ fn main() {
         match message {
             Ok(Message::CompilerArtifact(ref artifact)) if artifact.target.kind[0] == "bin" => {
                 // Find the artifact's source. This is not going to be pretty.
-                let src = Path::new(&artifact.target.src_path);
-                let mut romfs = None;
-                let root = find_project_root(&src).unwrap();
-                if root.join("res").is_dir() {
-                    romfs = Some(root.join("res").to_string_lossy().into_owned());
+                // For whatever reason, cargo thought it'd be a *great idea* to make file URLs use
+                // the non-standard "path+file:///" scheme, instead of, y'know, the ""file:///" everyone
+                // knows.
+                //
+                // So we check if it starts with path+file, and if it does, we skip the path+ part when
+                // parsing it.
+                let url = if artifact.package_id.url().starts_with("path+file") {
+                    &artifact.package_id.url()["path+".len()..]
+                } else {
+                    artifact.package_id.url()
+                };
+                let url = Url::parse(url).unwrap();
+                if url.scheme() != "file" {
+                    continue;
                 }
+
+                let root = url.to_file_path().unwrap();
+                let manifest = root.join("Cargo.toml");
+
+                let (package, target_metadata) = get_metadata(&manifest, &artifact.package_id.raw, &artifact.target.name);
+
+                let romfs = if let Some(romfs) = target_metadata.romfs {
+                    let romfs_path = root.join(romfs);
+                    if !romfs_path.is_dir() {
+                        panic!("Invalid romfs directory {:?}", romfs_path);
+                    } else {
+                        Some(romfs_path)
+                    }
+                } else if root.join("res").is_dir() {
+                    Some(root.join("res"))
+                } else {
+                    None
+                };
+
+                let romfs = romfs.map(|v| v.to_string_lossy().into_owned());
+                let romfs = romfs.as_ref().map(|v: &String| v.as_ref());
+
+                let icon_file = if let Some(icon) = target_metadata.icon {
+                    let icon_path = root.join(icon);
+                    if !icon_path.is_file() {
+                        panic!("Invalid icon file {:?}", icon_path);
+                    } else {
+                        Some(icon_path)
+                    }
+                } else if root.join("icon.jpg").is_file() {
+                    Some(root.join("icon.jpg"))
+                } else {
+                    None
+                };
+
+                let icon_file = icon_file.map(|v| v.to_string_lossy().into_owned());
+                let icon_file = icon_file.as_ref().map(|v| v.as_ref());
+
+                let mut nacp = target_metadata.nacp.unwrap_or(Default::default());
+                nacp.name.get_or_insert(package.name);
+                nacp.author.get_or_insert(package.authors[0].clone());
+                nacp.version.get_or_insert(package.version);
+                nacp.title_id.get_or_insert(package.title_id);
+
                 let mut new_name = PathBuf::from(artifact.filenames[0].clone());
                 assert!(new_name.set_extension("nro"));
-                NxoFile::from_elf(&artifact.filenames[0]).unwrap().write_nro(&mut File::create(new_name.clone()).unwrap(), romfs.as_ref().map(|v| v.as_ref())).unwrap();
-                println!("Built {} (using {:?} as romfs)", new_name.to_string_lossy(), romfs);
+                NxoFile::from_elf(&artifact.filenames[0]).unwrap()
+                    .write_nro(&mut File::create(new_name.clone()).unwrap(),
+                               romfs,
+                               icon_file,
+                               Some(nacp)
+                    ).unwrap();
+
+                println!("Built {}", new_name.to_string_lossy());
             },
             Ok(Message::CompilerArtifact(_artifact)) => {
                 //println!("{:#?}", artifact);
@@ -127,9 +201,6 @@ fn main() {
                 }
             },
             Ok(_) => (),
-            Err(ref err) if err.is_data() => {
-                println!("{:?}", err);
-            },
             Err(err) => {
                 panic!("{:?}", err);
             }
