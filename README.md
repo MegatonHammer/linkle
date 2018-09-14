@@ -34,6 +34,42 @@ Compiling and creating an NRO file (requires xargo from https://github.com/robla
 
     cargo nro
 
+# Cargo.toml metadata format
+
+When compiling a project with `cargo nro`, a special `[package.metadata.linkle.BINARY_NAME]` key is
+used to allow customizing the build. This is an example Cargo.toml:
+
+```
+[package]
+name = "link"
+version = "0.1.0"
+authors = ["linkle"]
+
+[package.metadata.linkle.megaton-example]
+romfs = "res/"
+icon = "icon.jpeg"
+titleid = "0100000000819"
+
+[package.metadata.linkle.megaton-example.nacp]
+name = "Link"
+
+[package.metadata.linkle.megaton-example.nacp.lang.ja]
+"name": "リンク",
+"author": "リンクル"
+```
+
+All paths are relative to the project root (where the Cargo.toml file is located).
+
+Every field has a sane default:
+
+| Field             | Description                                      | Default value       |
+| ----------------- |:------------------------------------------------:| -------------------:|
+| romfs             | The application romfs directory.                 | res/                |
+| icon              | The application icon.                            | icon.jpg            |
+| title_id          | The application title id.                        | 0000000000000000    |
+
+The `[package.metadata.linkle.BINARY_NAME.nacp]` key follows the [NACP input format](#nacp-input-format)
+
 # NACP input format
 
 This is an example of a compatible JSON:
