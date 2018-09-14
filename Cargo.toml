@@ -26,6 +26,7 @@ serde = "1"
 serde_derive = "1"
 serde_json = "1"
 cargo_metadata = { git = "https://github.com/roblabla/cargo_metadata", optional = true }
+url = "1.7.1"
 
 [features]
 binaries = ["clap", "cargo_metadata"]

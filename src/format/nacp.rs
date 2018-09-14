@@ -45,7 +45,7 @@ pub struct NacpLangEntries {
     pub zh_cn: Option<NacpLangEntry>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Default)]
 pub struct NacpFile {
     pub name: Option<String>,
     pub author: Option<String>,
