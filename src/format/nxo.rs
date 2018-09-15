@@ -234,7 +234,7 @@ impl NxoFile {
         output_writter.write_u32::<LittleEndian>(0)?; // version
 
         // Offset to the next available region.
-        let mut offset = total_len as u64 + 8 + 16 + 16 + 16;
+        let mut offset = 8 + 16 + 16 + 16;
 
         let icon_len = if let Some(icon) = &icon {
             // TODO: Check if icon is a 256x256 JPEG. Convert it if it isn't?
