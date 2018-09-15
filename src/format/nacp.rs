@@ -125,7 +125,7 @@ impl NacpFile {
         let default_lang_entry = NacpLangEntry { name, author };
         match lang_entries {
             None => {
-                for _ in 0..15 {
+                for _ in 0..16 {
                     self.write_lang_entry(output_writter, &default_lang_entry)?;
                 }
             }
@@ -234,10 +234,12 @@ impl NacpFile {
                 self.write_lang_entry(
                     output_writter,
                     &lang_entries
-                        .zh_tw
+                        .zh_cn
                         .clone()
                         .unwrap_or(default_lang_entry.clone()),
                 )?;
+                // There are 16 entries. One is missing :eyes:
+                self.write_lang_entry(output_writter, &default_lang_entry)?;
             }
         }
 
@@ -277,5 +279,17 @@ impl NacpFile {
         output_writter.write(&end_of_file)?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn nacp_is_4000_size() {
+        let mut buf = Vec::new();
+        NacpFile::default().write(&mut buf).unwrap();
+        assert_eq!(buf.len(), 0x4000, "Nacp length is wrong");
     }
 }
