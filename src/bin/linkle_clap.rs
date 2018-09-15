@@ -6,13 +6,18 @@ extern crate linkle;
 use clap::{App, AppSettings, Arg, ArgMatches, SubCommand};
 
 use std::fs::OpenOptions;
+use std::path::Path;
 use std::process;
 
 fn create_nxo(format: &str, matches: &ArgMatches) -> std::io::Result<()> {
     let input_file = matches.value_of("INPUT_FILE").unwrap();
     let output_file = matches.value_of("OUTPUT_FILE").unwrap();
-    let romfs_dir = matches.value_of("ROMFS_PATH");
     let icon_file = matches.value_of("ICON_PATH");
+    let romfs_dir = if let Some(romfs_path) = matches.value_of_os("ROMFS_PATH") {
+        Some(linkle::format::romfs::RomFs::from_directory(Path::new(romfs_path))?)
+    } else {
+        None
+    };
     let nacp_file = if let Some(nacp_path) = matches.value_of("NACP_FILE") {
         Some(linkle::format::nacp::NacpFile::from_file(nacp_path)?)
     } else {
@@ -50,9 +55,9 @@ fn create_nacp(matches: &ArgMatches) -> std::io::Result<()> {
 }
 
 fn create_romfs(matches: &ArgMatches) -> std::io::Result<()> {
-    let input_directory = matches.value_of("INPUT_DIRECTORY").unwrap();
+    let input_directory = matches.value_of_os("INPUT_DIRECTORY").unwrap();
     let output_file = matches.value_of("OUTPUT_FILE").unwrap();
-    let romfs = linkle::format::romfs::RomFs::from_directory(input_directory)?;
+    let romfs = linkle::format::romfs::RomFs::from_directory(Path::new(input_directory))?;
     let mut option = OpenOptions::new();
     let output_option = option.write(true).create(true).truncate(true);
     romfs.write(&mut output_option.open(output_file)?)?;

@@ -3,17 +3,31 @@ use std::rc::{Rc, Weak};
 use std::io::{self, Write, Cursor};
 use std::fs::{self, File};
 use std::cell::RefCell;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use byteorder::{WriteBytesExt, LE};
 
 #[derive(Debug)]
 struct RomFsDirEntCtx {
+    // Only used in `RomFs::from_directory`
     system_path: PathBuf,
     name: String,
     entry_offset: u32,
     parent: Weak<RefCell<RomFsDirEntCtx>>,
     child: Vec<Rc<RefCell<RomFsDirEntCtx>>>,
     file: Vec<Rc<RefCell<RomFsFileEntCtx>>>,
+}
+
+impl RomFsDirEntCtx {
+    fn internal_path(&self) -> String {
+        let mut path = self.name.clone();
+        let mut cur = self.parent.upgrade().unwrap();
+        while cur.borrow().name != "" {
+            path = cur.borrow().name.clone() + "/" + &path;
+            let new_cur = cur.borrow().parent.upgrade().unwrap();
+            cur = new_cur;
+        }
+        path
+    }
 }
 
 #[derive(Debug)]
@@ -24,6 +38,14 @@ struct RomFsFileEntCtx {
     offset: u64,
     size: u64,
     parent: Weak<RefCell<RomFsDirEntCtx>>,
+}
+
+impl RomFsFileEntCtx {
+    fn internal_path(&self) -> String {
+        let parent = self.parent.upgrade().unwrap();
+        let parent_borrow = parent.borrow();
+        parent_borrow.internal_path() + "/" + &self.name
+    }
 }
 
 #[repr(C)]
@@ -58,6 +80,23 @@ impl RomFsDirEntCtx {
             child: vec![],
             file: vec![]
         }))
+    }
+
+    fn new_root() -> Rc<RefCell<RomFsDirEntCtx>> {
+        // We'll want the parent to point to itself, so let's first
+        // set it to an unbound Weak, and set it to itself
+        // after creation.
+        let root = Rc::new(RefCell::new(RomFsDirEntCtx {
+            system_path: PathBuf::from(""),
+            name: String::from(""),
+            entry_offset: 0,
+            parent: Weak::new(),
+            child: vec![],
+            file: vec![]
+        }));
+        let weak = Rc::downgrade(&root);
+        root.borrow_mut().parent = weak;
+        root
     }
 }
 
@@ -116,30 +155,69 @@ pub struct RomFs {
 }
 
 impl RomFs {
-    pub fn from_directory(path: &str) -> io::Result<RomFs> {
-        // Stack of directories to visit. We'll iterate over it. When finding
-        // new directories, we'll push them to this stack, so that iteration may
-        // continue. This avoids doing recursive functions (which runs the risk
-        // of stack overflowing).
-        let mut dirs = vec![];
+    // Internal path
+    pub fn push_file(&mut self, file_path: &Path, internal_path: String) -> io::Result<()> {
+        let mut parent = self.dirs[0].clone();
 
-        // First, let's create our root folder. We'll want the parent to be
-        // itself, so let's first set it to an unbound Weak, and set it to itself
-        // after creation.
-        let root_folder = RomFsDirEntCtx::new(Weak::new(), PathBuf::from(path));
-        {
-            let mut root_folder_borrow = root_folder.borrow_mut();
+        let mut components = internal_path.split("/").peekable();
+        while let Some(component) = components.next() {
+            if components.peek().is_none() {
+                let metadata = file_path.metadata()?;
+                // Handling last component. Add the file.
+                let file_to_add = Rc::new(RefCell::new(RomFsFileEntCtx {
+                    system_path: PathBuf::from(file_path),
+                    name: String::from(component),
+                    entry_offset: 0,
+                    offset: 0,
+                    size: metadata.len(),
+                    parent: Rc::downgrade(&parent),
+                }));
+                self.files.push(file_to_add.clone());
+                parent.borrow_mut().file.push(file_to_add.clone());
+                parent.borrow_mut().file.sort_by_key(|v| v.borrow().name.clone());
 
-            root_folder_borrow.parent = Rc::downgrade(&root_folder.clone());
-            // The name is empty for the root dir.
-            root_folder_borrow.name = String::from("");
+                self.file_table_size += mem::size_of::<RomFsFileEntryHdr>() as u64 + align64(file_to_add.borrow().name.len() as u64, 4);
+            } else {
+                // Handling a parent component. Find the directory, create if it doesn't exist.
+                if component == "" {
+                    continue;
+                }
+                let new_parent = if let Some(child) = parent.borrow().child.iter().find(|v| v.borrow().name == component) {
+                    child.clone()
+                } else {
+                    // system_path is not used outside from_directory. It's okay if it doesn't
+                    // point to something "safe" (or to anything at all)
+                    let child = Rc::new(RefCell::new(RomFsDirEntCtx {
+                        system_path: PathBuf::from(""),
+                        name: String::from(component),
+                        entry_offset: 0,
+                        parent: Rc::downgrade(&parent),
+                        child: vec![],
+                        file: vec![]
+                    }));
+                    self.dirs.push(child.clone());
+                    parent.borrow_mut().child.push(child.clone());
+                    parent.borrow_mut().child.sort_by_key(|v| v.borrow().name.clone());
+
+                    self.dir_table_size += mem::size_of::<RomFsDirEntryHdr>() as u64 + align64(child.borrow().name.len() as u64, 4);
+                    child
+                };
+                parent = new_parent;
+            }
         }
+        self.files.sort_by_key(|v| v.borrow().internal_path());
+        self.dirs.sort_by_key(|v| v.borrow().internal_path());
+        self.calculate_offsets();
+        Ok(())
+    }
 
-        // Let's build our context. This will be returned. It contains the graph
-        // of files/directories, and some meta-information that will be used to
-        // write the romfs file afterwards.
+    pub fn empty() -> RomFs {
+        // First, let's create our root folder.
+        let root_folder = RomFsDirEntCtx::new_root();
+
+        // And now, build the empty context, with just the root directory in it.
         let mut ctx = RomFs {
-            dirs: vec![],
+            dirs: vec![root_folder],
             files: vec![],
             // We have the root dir already.
             dir_table_size: mem::size_of::<RomFsDirEntryHdr>() as u64, // Root Dir
@@ -147,14 +225,31 @@ impl RomFs {
             file_partition_size: 0,
         };
 
-        // Let's start iterating.
-        ctx.dirs.push(root_folder.clone());
-        dirs.push(root_folder);
+        ctx.calculate_offsets();
+
+        ctx
+    }
+
+    pub fn from_directory(path: &Path) -> io::Result<RomFs> {
+        // Stack of directories to visit. We'll iterate over it. When finding
+        // new directories, we'll push them to this stack, so that iteration may
+        // continue. This avoids doing recursive functions (which runs the risk
+        // of stack overflowing).
+        let mut dirs = vec![];
+
+        // Let's build our context. This will be returned. It contains the graph
+        // of files/directories, and some meta-information that will be used to
+        // write the romfs file afterwards.
+        let mut ctx = RomFs::empty();
+
+        // Set the system_path of the root directory.
+        ctx.dirs[0].borrow_mut().system_path = PathBuf::from(path);
+
+        // Let's start iterating with the root directory.
+        dirs.push(ctx.dirs[0].clone());
 
         while let Some(parent_dir) = dirs.pop() {
             let path = parent_dir.borrow().system_path.clone();
-
-            let cur_dir_idx = ctx.dirs.len();
 
             for entry in fs::read_dir(path)? {
                 let entry = entry?;
@@ -198,34 +293,12 @@ impl RomFs {
             }
             parent_dir.borrow_mut().child.sort_by_key(|v| v.borrow().name.clone());
             parent_dir.borrow_mut().file.sort_by_key(|v| v.borrow().name.clone());
-            ctx.dirs[cur_dir_idx..].sort_by_key(|v| v.borrow().name.clone());
         }
 
-        ctx.files.sort_by_key(|v| v.borrow().system_path.to_string_lossy().into_owned());
+        ctx.files.sort_by_key(|v| v.borrow().internal_path());
+        ctx.dirs.sort_by_key(|v| v.borrow().internal_path());
 
-        // Calculate file offset and file partition size.
-        let mut entry_offset = 0;
-        for file in ctx.files.iter_mut() {
-            // Files have to start aligned at 0x10. We do this at the start to
-            // avoid useless padding after the last file.
-            ctx.file_partition_size = align64(ctx.file_partition_size, 0x10);
-
-            // Update the data section size and set the file offset in the data
-            // section.
-            file.borrow_mut().offset = ctx.file_partition_size;
-            ctx.file_partition_size += file.borrow().size;
-
-            // Set the file offset in the file table section.
-            file.borrow_mut().entry_offset = entry_offset;
-            entry_offset += mem::size_of::<RomFsFileEntryHdr>() as u32 + align32(file.borrow().name.len() as u32, 4);
-        }
-
-        // Calculate directory offsets.
-        let mut entry_offset = 0;
-        for dir in ctx.dirs.iter_mut() {
-            dir.borrow_mut().entry_offset = entry_offset;
-            entry_offset += mem::size_of::<RomFsDirEntryHdr>() as u32 + align32(dir.borrow().name.len() as u32, 4);
-        }
+        ctx.calculate_offsets();
 
         Ok(ctx)
     }
@@ -237,6 +310,34 @@ impl RomFs {
             romfs_get_hash_table_count(self.files.len() * mem::size_of::<u32>()) as u64 +
             self.file_table_size) as usize
     }
+
+    fn calculate_offsets(&mut self) {
+        // Calculate file offset and file partition size.
+        let mut entry_offset = 0;
+        self.file_partition_size = 0;
+        for file in self.files.iter_mut() {
+            // Files have to start aligned at 0x10. We do this at the start to
+            // avoid useless padding after the last file.
+            self.file_partition_size = align64(self.file_partition_size, 0x10);
+
+            // Update the data section size and set the file offset in the data
+            // section.
+            file.borrow_mut().offset = self.file_partition_size;
+            self.file_partition_size += file.borrow().size;
+
+            // Set the file offset in the file table section.
+            file.borrow_mut().entry_offset = entry_offset;
+            entry_offset += mem::size_of::<RomFsFileEntryHdr>() as u32 + align32(file.borrow().name.len() as u32, 4);
+        }
+
+        // Calculate directory offsets.
+        let mut entry_offset = 0;
+        for dir in self.dirs.iter_mut() {
+            dir.borrow_mut().entry_offset = entry_offset;
+            entry_offset += mem::size_of::<RomFsDirEntryHdr>() as u32 + align32(dir.borrow().name.len() as u32, 4);
+        }
+    }
+
 
     pub fn write(&self, to: &mut Write) -> io::Result<()> {
         const ROMFS_ENTRY_EMPTY: u32 = 0xFFFFFFFF;
@@ -274,7 +375,7 @@ impl RomFs {
             let dir = dir.borrow();
             let parent = dir.parent.upgrade().unwrap();
             let parent = parent.borrow();
-            let sibling = parent.child.windows(2).find(|window| window[0].borrow().system_path == dir.system_path).map(|window| window[1].borrow().entry_offset);
+            let sibling = parent.child.windows(2).find(|window| window[0].borrow().internal_path() == dir.internal_path()).map(|window| window[1].borrow().entry_offset);
             let hash = calc_path_hash(parent.entry_offset, &dir.name);
 
             let mut cursor = Cursor::new(&mut dir_table[dir.entry_offset as usize..]);

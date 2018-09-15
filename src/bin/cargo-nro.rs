@@ -12,7 +12,7 @@ use std::env::{self, VarError};
 use std::process::{Command, Stdio};
 use std::path::{Path, PathBuf};
 use std::fs::File;
-use linkle::format::{nxo::NxoFile, nacp::NacpFile};
+use linkle::format::{romfs::RomFs, nxo::NxoFile, nacp::NacpFile};
 use cargo_metadata::{Package, Message};
 use clap::{Arg, App};
 use url::Url;
@@ -154,9 +154,6 @@ fn main() {
                     None
                 };
 
-                let romfs = romfs.map(|v| v.to_string_lossy().into_owned());
-                let romfs = romfs.as_ref().map(|v: &String| v.as_ref());
-
                 let icon_file = if let Some(icon) = target_metadata.icon {
                     let icon_path = root.join(icon);
                     if !icon_path.is_file() {
@@ -181,8 +178,15 @@ fn main() {
                     nacp.title_id = target_metadata.title_id;
                 }
 
+                let romfs = if let Some(romfs) = romfs {
+                    Some(RomFs::from_directory(&romfs).unwrap())
+                } else {
+                    None
+                };
+
                 let mut new_name = PathBuf::from(artifact.filenames[0].clone());
                 assert!(new_name.set_extension("nro"));
+
                 NxoFile::from_elf(&artifact.filenames[0]).unwrap()
                     .write_nro(&mut File::create(new_name.clone()).unwrap(),
                                romfs,
