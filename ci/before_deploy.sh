@@ -19,7 +19,7 @@ main() {
 
     cross rustc --bin linkle --target $TARGET --release --all-features -- -C lto
 
-    cp target/$TARGET/release/linkle $stage/
+    cp target/$TARGET/release/linkle $stage/ || cp target/$TARGET/release/linkle.exe $stage/
 
     cd $stage
     tar czf $src/$CRATE_NAME-$TRAVIS_TAG-$TARGET.tar.gz *
