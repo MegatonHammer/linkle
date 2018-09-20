@@ -17,7 +17,7 @@ main() {
 
     test -f Cargo.lock || cargo generate-lockfile
 
-    cross rustc --bin linkle --target $TARGET --release -- -C lto
+    cross rustc --bin linkle --target $TARGET --release --all-features -- -C lto
 
     cp target/$TARGET/release/linkle $stage/
 
