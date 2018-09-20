@@ -32,6 +32,10 @@ Creating a NACP file:
 
     linkle ncap input.json output.nacp
 
+Creating a RomFs file:
+
+    linkle romfs input_directory output.romfs
+
 Compiling and creating an NRO file (requires xargo from https://github.com/roblabla/xargo installed):
 
     cargo nro
