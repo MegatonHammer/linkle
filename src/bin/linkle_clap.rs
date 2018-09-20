@@ -97,7 +97,7 @@ fn main() {
         .takes_value(true)
         .value_name("ROMFS_PATH")
         .help("Sets the directory to use as RomFs when bundling into an NRO");
-    let icon_arg = Arg::with_name("ROMFS_PATH")
+    let icon_arg = Arg::with_name("ICON_PATH")
         .long("icon-path")
         .takes_value(true)
         .value_name("ICON_PATH")
