@@ -1,9 +1,122 @@
+# Based on the "trust" template v0.1.2
+# https://github.com/japaric/trust/tree/v0.1.2
+
+dist: trusty
 language: rust
-rust:
-- stable
+services: docker
+sudo: required
+
+env:
+  global:
+    - CRATE_NAME=linkle
+
+matrix:
+  include:
+    # Android
+    #- env: TARGET=aarch64-linux-android DISABLE_TESTS=1
+    #- env: TARGET=arm-linux-androideabi DISABLE_TESTS=1
+    #- env: TARGET=armv7-linux-androideabi DISABLE_TESTS=1
+    #- env: TARGET=i686-linux-android DISABLE_TESTS=1
+    #- env: TARGET=x86_64-linux-android DISABLE_TESTS=1
+
+    # iOS
+    #- env: TARGET=aarch64-apple-ios DISABLE_TESTS=1
+    #  os: osx
+    #- env: TARGET=armv7-apple-ios DISABLE_TESTS=1
+    #  os: osx
+    #- env: TARGET=armv7s-apple-ios DISABLE_TESTS=1
+    #  os: osx
+    #- env: TARGET=i386-apple-ios DISABLE_TESTS=1
+    #  os: osx
+    #- env: TARGET=x86_64-apple-ios DISABLE_TESTS=1
+    #  os: osx
+
+    # Linux
+    #- env: TARGET=aarch64-unknown-linux-gnu
+    #- env: TARGET=arm-unknown-linux-gnueabi
+    #- env: TARGET=armv7-unknown-linux-gnueabihf
+    # - env: TARGET=i686-unknown-linux-gnu
+    # TODO: It'd be nice to have 32-bit linux builds, but for some reasons
+    # backtrace-sys fails to compile properly.
+    # - env: TARGET=i686-unknown-linux-musl
+    # - env: TARGET=mips-unknown-linux-gnu
+    # - env: TARGET=mips64-unknown-linux-gnuabi64
+    # - env: TARGET=mips64el-unknown-linux-gnuabi64
+    # - env: TARGET=mipsel-unknown-linux-gnu
+    # - env: TARGET=powerpc-unknown-linux-gnu
+    # - env: TARGET=powerpc64-unknown-linux-gnu
+    # - env: TARGET=powerpc64le-unknown-linux-gnu
+    # - env: TARGET=s390x-unknown-linux-gnu DISABLE_TESTS=1
+    # - env: TARGET=x86_64-unknown-linux-gnu
+    - env: TARGET=x86_64-unknown-linux-musl
+
+    # OSX
+    - env: TARGET=i686-apple-darwin
+      os: osx
+    - env: TARGET=x86_64-apple-darwin
+      os: osx
+
+    # *BSD
+    #- env: TARGET=i686-unknown-freebsd DISABLE_TESTS=1
+    #- env: TARGET=x86_64-unknown-freebsd DISABLE_TESTS=1
+    #- env: TARGET=x86_64-unknown-netbsd DISABLE_TESTS=1
+
+    # Windows
+    - env: TARGET=x86_64-pc-windows-gnu
+
+    # Bare metal
+    # These targets don't support std and as such are likely not suitable for
+    # most crates.
+    # - env: TARGET=thumbv6m-none-eabi
+    # - env: TARGET=thumbv7em-none-eabi
+    # - env: TARGET=thumbv7em-none-eabihf
+    # - env: TARGET=thumbv7m-none-eabi
+
+    # Testing other channels
+    - env: TARGET=x86_64-unknown-linux-gnu
+      rust: nightly
+    #- env: TARGET=x86_64-apple-darwin
+    #  os: osx
+    #  rust: nightly
+
+before_install:
+  - set -e
+  - rustup self update
+
+install:
+  - sh ci/install.sh
+  - source ~/.cargo/env || true
 
 script:
-- cargo build --verbose --all --all-features
-- cargo test --verbose --all --all-features
+  - bash ci/script.sh
+
+after_script: set +e
+
+before_deploy:
+  - sh ci/before_deploy.sh
+
+deploy:
+  api_key:
+    secure: "ReKXiuhMkVUkvlD74NNGYWywRKypSVzeVEYzdnWvI/Un626vtaWhaL9LH2h/3SYnlnNrK7gVQELsmJpgUlptzhW+hNdjswnSIB+1UxNNodMKicAhYBon4UaqnB/N7T+u1azCDdLpT5X9hNqbAfyCd05PZrEBslJVud9W/ePaqqTrTJCv0TrBn0S0G53N7wAESfUhg40EuLlmABM4RSXygkJjwE3OhsdWZw+huYU9tVeqzWeZKVZasDkkwL4AZgM7R4H8QGB21FCvG673JYBoROhLx38wwPW4or4/lyQbzSP4hPxR33k437+lrkgBXlU4BK1lr6Cg4mrgOQIbCB28f8NdetxdWLEbxTdZ2ri4r/0N7xFAnp83ftLDnzJNADiD27pDAeYYnGCg6fx4ZgD9+IZJYw86jwPfW8sujtqbfGSY8Fq+sP+DI+QLLt5esP+Pag1CTRHqxyrqdCBpH386J9xrjFYagmdLnB1InU+Q5hrJMa/4RjwCiv/WoD3igTuvE55uEu7R72REkKpfyrRHH0ioPoKS7/cF8SD8qjHbXqhOQpOitXmOsjZBPfgbQrUBo/uUnc6rzLtVU1+IMS85D3boWOMTxc5glemc6lfeW5+3K3+yZ1buDXMl+FaIdGHtDHQxzYvHhhIaYke2epnQZPIzoCpKq5Iw/Fi4i8vp4C4="
+  file_glob: true
+  file: $CRATE_NAME-$TRAVIS_TAG-$TARGET.*
+  on:
+    condition: $TRAVIS_RUST_VERSION = stable
+    tags: true
+  provider: releases
+  skip_cleanup: true
 
 cache: cargo
+before_cache:
+  # Travis can't cache files that are not readable by "others"
+  - chmod -R a+r $HOME/.cargo
+
+branches:
+  only:
+    # release tags
+    - /^v\d+\.\d+\.\d+.*$/
+    - master
+
+notifications:
+  email:
+    on_success: never
