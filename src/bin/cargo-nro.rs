@@ -7,15 +7,22 @@ extern crate serde_json;
 #[macro_use]
 extern crate serde_derive;
 extern crate cargo_metadata;
+extern crate goblin;
+extern crate scroll;
 
 use std::env::{self, VarError};
 use std::process::{Command, Stdio};
 use std::path::{Path, PathBuf};
 use std::fs::File;
-use linkle::format::{nxo::NxoFile, nacp::NacpFile};
+use std::io::{Write, Read};
+use scroll::IOwrite;
+
+use linkle::format::{romfs::RomFs, nxo::NxoFile, nacp::NacpFile};
 use cargo_metadata::{Package, Message};
 use clap::{Arg, App};
 use url::Url;
+use goblin::elf::{Elf, Header as ElfHeader, ProgramHeader};
+use goblin::elf::section_header::{SHT_NOBITS, SHT_SYMTAB, SHT_STRTAB};
 
 fn find_project_root(path: &Path) -> Option<&Path> {
     for parent in path.ancestors() {
@@ -67,6 +74,106 @@ fn get_metadata(manifest_path: &Path, package_id: &str, target_name: &str) -> (P
     let package = metadata.packages.into_iter().find(|v| v.id == package_id).unwrap();
     let package_metadata = serde_json::from_value(package.metadata.pointer(&format!("linkle/{}", target_name)).cloned().unwrap_or(serde_json::Value::Null)).unwrap_or(PackageMetadata::default());
     (package, package_metadata)
+}
+
+trait BetterIOWrite<Ctx: Copy>: IOwrite<Ctx> {
+    fn iowrite_with_try<N: scroll::ctx::SizeWith<Ctx, Units = usize> + scroll::ctx::TryIntoCtx<Ctx>>(&mut self, n: N, ctx: Ctx)
+                                                                           -> Result<(), N::Error>
+    where
+        N::Error: From<std::io::Error>
+    {
+        let mut buf = [0u8; 256];
+        let size = N::size_with(&ctx);
+        let buf = &mut buf[0..size];
+        n.try_into_ctx(buf, ctx)?;
+        self.write_all(buf)?;
+        Ok(())
+    }
+}
+
+impl<Ctx: Copy, W: IOwrite<Ctx> + ?Sized> BetterIOWrite<Ctx> for W {}
+
+fn generate_debuginfo_romfs<P: AsRef<Path>>(elf_path: &Path, romfs: Option<P>) -> goblin::error::Result<RomFs> {
+    let mut elf_file = File::open(elf_path)?;
+    let mut buffer = Vec::new();
+    elf_file.read_to_end(&mut buffer)?;
+    let elf = goblin::elf::Elf::parse(&buffer)?;
+    let new_file = {
+        let mut new_path = PathBuf::from(elf_path);
+        new_path.set_extension("debug");
+        let mut file = File::create(&new_path)?;
+        let Elf {
+            mut header,
+            program_headers,
+            mut section_headers,
+            is_64,
+            little_endian,
+            ..
+        } = elf;
+
+        let ctx = goblin::container::Ctx {
+            container: if is_64 { goblin::container::Container::Big } else { goblin::container::Container::Little },
+            le: if little_endian { goblin::container::Endian::Little } else { goblin::container::Endian::Big }
+        };
+
+        for section in section_headers.iter_mut() {
+            if section.sh_type == SHT_NOBITS || section.sh_type == SHT_SYMTAB || section.sh_type == SHT_STRTAB {
+                continue;
+            }
+            if let Some(Ok(s)) = elf.shdr_strtab.get(section.sh_name) {
+                if !(s.starts_with(".debug") || s == ".comment") {
+                    section.sh_type = SHT_NOBITS;
+                }
+            }
+        }
+
+        // Calculate section data length + elf/program headers
+        let data_off = ElfHeader::size(&ctx) + ProgramHeader::size(&ctx) * program_headers.len();
+        let shoff = data_off as u64 + section_headers.iter().map(|v| {
+            if v.sh_type != SHT_NOBITS {
+                v.sh_size
+            } else {
+                0
+            }
+        }).sum::<u64>();
+
+        // Write ELF header
+        // TODO: Anything else?
+        header.e_phoff = ::std::mem::size_of::<ElfHeader>() as u64;
+        header.e_shoff = shoff;
+        file.iowrite_with(header, ctx)?;
+
+        // Write program headers
+        for phdr in program_headers {
+            file.iowrite_with_try(phdr, ctx)?;
+        }
+
+        // Write section data
+        let mut cur_idx = data_off;
+        for section in section_headers.iter_mut().filter(|v| v.sh_type != SHT_NOBITS) {
+            file.write_all(&buffer[section.sh_offset as usize..(section.sh_offset + section.sh_size) as usize])?;
+            section.sh_offset = cur_idx as u64;
+            cur_idx += section.sh_size as usize;
+        }
+
+        // Write section headers
+        for section in section_headers {
+            file.iowrite_with(section, ctx)?;
+        }
+
+        file.sync_all()?;
+        new_path
+    };
+
+    let mut romfs = if let Some(romfs) = romfs {
+        RomFs::from_directory(romfs.as_ref())?
+    } else {
+        RomFs::empty()
+    };
+
+    romfs.push_file(&new_file, String::from("debug_info.elf"))?;
+
+    Ok(romfs)
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -154,9 +261,6 @@ fn main() {
                     None
                 };
 
-                let romfs = romfs.map(|v| v.to_string_lossy().into_owned());
-                let romfs = romfs.as_ref().map(|v: &String| v.as_ref());
-
                 let icon_file = if let Some(icon) = target_metadata.icon {
                     let icon_path = root.join(icon);
                     if !icon_path.is_file() {
@@ -181,11 +285,14 @@ fn main() {
                     nacp.title_id = target_metadata.title_id;
                 }
 
+                let romfs = generate_debuginfo_romfs(Path::new(&artifact.filenames[0]), romfs).unwrap();
+
                 let mut new_name = PathBuf::from(artifact.filenames[0].clone());
                 assert!(new_name.set_extension("nro"));
+
                 NxoFile::from_elf(&artifact.filenames[0]).unwrap()
                     .write_nro(&mut File::create(new_name.clone()).unwrap(),
-                               romfs,
+                               Some(romfs),
                                icon_file,
                                Some(nacp)
                     ).unwrap();

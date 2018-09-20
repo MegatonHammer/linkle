@@ -120,7 +120,7 @@ impl NxoFile {
         })
     }
 
-    pub fn write_nro<T>(&mut self, output_writter: &mut T, romfs: Option<&str>, icon: Option<&str>, nacp: Option<NacpFile>) -> std::io::Result<()>
+    pub fn write_nro<T>(&mut self, output_writter: &mut T, romfs: Option<RomFs>, icon: Option<&str>, nacp: Option<NacpFile>) -> std::io::Result<()>
     where
         T: Write,
     {
@@ -234,7 +234,7 @@ impl NxoFile {
         output_writter.write_u32::<LittleEndian>(0)?; // version
 
         // Offset to the next available region.
-        let mut offset = total_len as u64 + 8 + 16 + 16 + 16;
+        let mut offset = 8 + 16 + 16 + 16;
 
         let icon_len = if let Some(icon) = &icon {
             // TODO: Check if icon is a 256x256 JPEG. Convert it if it isn't?
@@ -263,15 +263,12 @@ impl NxoFile {
 
         offset += nacp_len;
 
-        let romfs = if let Some(romfs) = &romfs {
-            let romfs = RomFs::from_directory(romfs)?;
+        if let Some(romfs) = &romfs {
             output_writter.write_u64::<LittleEndian>(offset)?;
             output_writter.write_u64::<LittleEndian>(romfs.len() as u64)?;
-            Some(romfs)
         } else {
             output_writter.write_u64::<LittleEndian>(0)?;
             output_writter.write_u64::<LittleEndian>(0)?;
-            None
         };
 
         if let Some(icon) = icon {
