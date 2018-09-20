@@ -1,6 +1,6 @@
 [package]
 name = "linkle"
-version = "0.2.5"
+version = "0.2.6"
 authors = ["Thog <contact@thog.eu>"]
 license = "MIT/Apache-2.0"
 homepage = "https://github.com/MegatonHammer/linkle/"
