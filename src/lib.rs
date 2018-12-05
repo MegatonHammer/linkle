@@ -8,5 +8,11 @@ extern crate serde_derive;
 
 extern crate serde;
 extern crate serde_json;
+extern crate openssl;
+extern crate ini;
+#[macro_use]
+extern crate failure;
+extern crate dirs;
 
 pub mod format;
+pub mod pki;
