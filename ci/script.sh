@@ -3,13 +3,19 @@
 set -ex
 
 main() {
-    cross build --target $TARGET --release --all-features
+    if [ $TRAVIS_OS_NAME = windows ]; then
+        # On windows, we didn't install cross. Welp.
+        cross=cargo
+    else
+        cross=cross
+    fi
+    $cross build --target $TARGET --release --all-features
 
     if [ ! -z $DISABLE_TESTS ]; then
         return
     fi
 
-    cross test --target $TARGET --release --all-features
+    $cross test --target $TARGET --release --all-features
 }
 
 # we don't run the "test phase" when doing deploys
