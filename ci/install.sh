@@ -10,6 +10,7 @@ main() {
         # Let's have the script run cargo instead of cross.
         # Make sure the target is installed though.
         rustup target install $TARGET
+        choco install strawberryperl
         exit
     else
         target=x86_64-apple-darwin
