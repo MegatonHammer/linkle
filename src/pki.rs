@@ -7,6 +7,7 @@ use failure::Backtrace;
 use std::fs::File;
 use std::io::{self, ErrorKind};
 use std::path::Path;
+use error::Error;
 
 struct Aes128Key([u8; 0x10]);
 struct AesXtsKey([u8; 0x20]);
@@ -211,36 +212,6 @@ macro_rules! make_key_macros {
                 }
             }
         }
-    }
-}
-
-#[derive(Debug, Fail)]
-pub enum Error {
-    #[fail(display = "Error reading keys file: {}", _0)]
-    Io(io::Error, Backtrace),
-    #[fail(display = "Key derivation error: {}", _0)]
-    Openssl(ErrorStack, Backtrace),
-    #[fail(display = "Error parsing the INI file: {}", _0)]
-    Ini(ini::ini::Error, Backtrace),
-    #[fail(display = "Key derivation error: {}", _0)]
-    Crypto(String, Backtrace),
-}
-
-impl From<ErrorStack> for Error {
-    fn from(err: ErrorStack) -> Error {
-        Error::Openssl(err, Backtrace::new())
-    }
-}
-
-impl From<io::Error> for Error {
-    fn from(err: io::Error) -> Error {
-        Error::Io(err, Backtrace::new())
-    }
-}
-
-impl From<ini::ini::Error> for Error {
-    fn from(err: ini::ini::Error) -> Error {
-        Error::Ini(err, Backtrace::new())
     }
 }
 
