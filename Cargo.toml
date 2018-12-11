@@ -20,7 +20,8 @@ required-features = ["binaries"]
 elf = "0.0.10"
 byteorder = "1"
 lz4 = { git = "https://github.com/bozaro/lz4-rs.git"}
-clap = {version = "2", optional = true}
+clap = { version = "2", optional = true }
+structopt = { version = "0.2", optional = true }
 sha2 = "0.7.1"
 scroll = { version = "0.9.0", optional = true }
 serde = "1"
@@ -29,10 +30,11 @@ serde_json = "1"
 cargo_metadata = { git = "https://github.com/roblabla/cargo_metadata", optional = true }
 url = "1.7.1"
 goblin = { version = "0.0.17", optional = true }
-openssl = "0.10"
 rust-ini = "0.13"
 failure = "0.1"
 dirs = "1.0"
+block-modes = "0.2"
+aes = "0.3"
 
 [features]
-binaries = ["clap", "cargo_metadata", "scroll", "goblin"]
+binaries = ["structopt", "cargo_metadata", "scroll", "goblin"]

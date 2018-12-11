@@ -1,12 +1,15 @@
-use openssl::symm::{Cipher, Mode, Crypter};
-use openssl::error::ErrorStack;
 use std::fmt;
 use ini::{self, ini::Properties};
-//use std::fs::File;
 use failure::Backtrace;
 use std::fs::File;
 use std::io::{self, ErrorKind};
 use std::path::Path;
+use error::Error;
+use aes::Aes128;
+use block_modes::{Ctr128, BlockModeIv, BlockMode};
+use block_modes::block_padding::ZeroPadding;
+use aes::block_cipher_trait::generic_array::GenericArray;
+use aes::block_cipher_trait::BlockCipher;
 
 struct Aes128Key([u8; 0x10]);
 struct AesXtsKey([u8; 0x20]);
@@ -34,47 +37,36 @@ impl_debug!(Keyblob);
 impl_debug!(Modulus);
 
 impl EncryptedKeyblob {
-    fn decrypt(&self, key: &Aes128Key) -> Result<Keyblob, ErrorStack> {
-        let mut keyblob = [0; 0xA0];
-        let mut crypter = Crypter::new(Cipher::aes_128_ctr(), Mode::Decrypt, &key.0, Some(&self.0[0x10..0x20]))?;
-        crypter.pad(false);
+    fn decrypt(&self, key: &Aes128Key) -> Result<Keyblob, Error> {
+        let mut keyblob = [0; 0x90];
+        keyblob.copy_from_slice(&self.0[0x20..]);
 
-        let mut out = crypter.update(&self.0[0x20..], &mut keyblob)?;
-        out += crypter.finalize(&mut keyblob)?;
+        let mut crypter = Ctr128::<Aes128, ZeroPadding>::new_fixkey(GenericArray::from_slice(&key.0), GenericArray::from_slice(&self.0[0x10..0x20]));
+        crypter.decrypt_nopad(&mut keyblob)?;
 
-        let mut realkeyblob = [0; 0x90];
-        realkeyblob.copy_from_slice(&keyblob[..0x90]);
-        Ok(Keyblob(realkeyblob))
+        Ok(Keyblob(keyblob))
     }
 }
 
 impl Aes128Key {
-    fn derive_key(&self, source: &[u8; 0x10]) -> Result<Aes128Key, ErrorStack> {
-        // Needs to be twice the size because openssl is stupid.
-        let mut newkey = [0; 0x20];
-        let mut crypter = Crypter::new(Cipher::aes_128_ecb(), Mode::Decrypt, &self.0, None)?;
-        crypter.pad(false);
+    fn derive_key(&self, source: &[u8; 0x10]) -> Result<Aes128Key, Error> {
+        let mut newkey = *source;
 
-        let mut out = crypter.update(&source[..], &mut newkey[..])?;
-        out += crypter.finalize(&mut newkey[out..])?;
+        let crypter = Aes128::new(GenericArray::from_slice(&self.0));
+        crypter.decrypt_block(GenericArray::from_mut_slice(&mut newkey));
 
-        let mut realkey = [0; 0x10];
-        realkey.copy_from_slice(&newkey[..0x10]);
-        Ok(Aes128Key(realkey))
+        Ok(Aes128Key(newkey))
     }
 
-    fn derive_xts_key(&self, source: &[u8; 0x20]) -> Result<AesXtsKey, ErrorStack> {
-        // Needs to be twice the size because openssl is stupid.
-        let mut newkey = [0; 0x30];
-        let mut crypter = Crypter::new(Cipher::aes_128_ecb(), Mode::Decrypt, &self.0, None)?;
-        crypter.pad(false);
+    fn derive_xts_key(&self, source: &[u8; 0x20]) -> Result<AesXtsKey, Error> {
+        let mut newkey = *source;
 
-        let mut out = crypter.update(&source[..], &mut newkey[..])?;
-        out += crypter.finalize(&mut newkey[out..])?;
+        let crypter = Aes128::new(GenericArray::from_slice(&self.0));
+        crypter.decrypt_block(GenericArray::from_mut_slice(&mut newkey[0x00..0x10]));
+        crypter.decrypt_block(GenericArray::from_mut_slice(&mut newkey[0x10..0x20]));
 
-        let mut realkey = [0; 0x20];
-        realkey.copy_from_slice(&newkey[..0x20]);
-        Ok(AesXtsKey(realkey))
+        Ok(AesXtsKey(newkey))
+
     }
 }
 
@@ -89,7 +81,7 @@ fn key_to_aes(keys: &Properties, name: &str, key: &mut [u8]) -> Result<Option<()
                 b'a'..=b'z' => c - b'a' + 10,
                 b'A'..=b'Z' => c - b'A' + 10,
                 b'0'..=b'9' => c - b'0',
-                _ => return Err(Error::Crypto(format!("Key {} contains an invalid character. Each character should be a hexadecimal digit.", name), Backtrace::new()))
+                c => return Err(Error::Crypto(format!("Key {} contains invalid character {}. Each character should be a hexadecimal digit.", name, c as char), Backtrace::new()))
             };
             key[idx / 2] |= c << if idx % 2 == 0 { 4 } else { 0 };
         }
@@ -214,37 +206,7 @@ macro_rules! make_key_macros {
     }
 }
 
-#[derive(Debug, Fail)]
-pub enum Error {
-    #[fail(display = "Error reading keys file: {}", _0)]
-    Io(io::Error, Backtrace),
-    #[fail(display = "Key derivation error: {}", _0)]
-    Openssl(ErrorStack, Backtrace),
-    #[fail(display = "Error parsing the INI file: {}", _0)]
-    Ini(ini::ini::Error, Backtrace),
-    #[fail(display = "Key derivation error: {}", _0)]
-    Crypto(String, Backtrace),
-}
-
-impl From<ErrorStack> for Error {
-    fn from(err: ErrorStack) -> Error {
-        Error::Openssl(err, Backtrace::new())
-    }
-}
-
-impl From<io::Error> for Error {
-    fn from(err: io::Error) -> Error {
-        Error::Io(err, Backtrace::new())
-    }
-}
-
-impl From<ini::ini::Error> for Error {
-    fn from(err: ini::ini::Error) -> Error {
-        Error::Ini(err, Backtrace::new())
-    }
-}
-
-fn generate_kek(src: &Aes128Key, master_key: &Aes128Key, kek_seed: &Aes128Key, key_seed: &Aes128Key) -> Result<Aes128Key, ErrorStack> {
+fn generate_kek(src: &Aes128Key, master_key: &Aes128Key, kek_seed: &Aes128Key, key_seed: &Aes128Key) -> Result<Aes128Key, Error> {
     let kek = master_key.derive_key(&kek_seed.0)?;
     let src_kek = kek.derive_key(&src.0)?;
     src_kek.derive_key(&key_seed.0)
@@ -418,7 +380,7 @@ impl Keys {
         }
         for i in 0..6 {
             match (&self.keyblob_keys[i], &self.keyblob_mac_keys[i], &self.encrypted_keyblobs[i]) {
-                (Some(keyblob_key), Some(keyblob_mac_key), Some(encrypted_keyblob)) => {
+                (Some(keyblob_key), Some(_keyblob_mac_key), Some(encrypted_keyblob)) => {
                     // TODO: Calculate cmac
                     self.keyblobs[i] = Some(encrypted_keyblob.decrypt(keyblob_key)?);
                 },

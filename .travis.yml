@@ -62,8 +62,10 @@ matrix:
     #- env: TARGET=x86_64-unknown-netbsd DISABLE_TESTS=1
 
     # Windows
-    - env: TARGET=i686-pc-windows-gnu 
-    - env: TARGET=x86_64-pc-windows-gnu
+    - env: TARGET=i686-pc-windows-msvc
+      os: windows
+    - env: TARGET=x86_64-pc-windows-msvc
+      os: windows
 
     # Bare metal
     # These targets don't support std and as such are likely not suitable for
@@ -74,7 +76,7 @@ matrix:
     # - env: TARGET=thumbv7m-none-eabi
 
     # Testing other channels
-    - env: TARGET=x86_64-unknown-linux-gnu
+    - env: TARGET=x86_64-unknown-linux-musl
       rust: nightly
     #- env: TARGET=x86_64-apple-darwin
     #  os: osx
