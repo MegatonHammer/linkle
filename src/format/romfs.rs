@@ -339,7 +339,7 @@ impl RomFs {
     }
 
 
-    pub fn write(&self, to: &mut Write) -> io::Result<()> {
+    pub fn write(&self, to: &mut dyn Write) -> io::Result<()> {
         const ROMFS_ENTRY_EMPTY: u32 = 0xFFFFFFFF;
 
         let mut dir_hash_table = vec![ROMFS_ENTRY_EMPTY; romfs_get_hash_table_count(self.dirs.len())];

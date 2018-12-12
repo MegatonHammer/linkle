@@ -3,7 +3,6 @@ use lz4;
 use std;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
-use std::process;
 use sha2::{Sha256, Digest};
 
 pub fn align(size: usize, padding: usize) -> usize {

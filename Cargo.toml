@@ -5,6 +5,7 @@ authors = ["Thog <contact@thog.eu>"]
 license = "MIT/Apache-2.0"
 homepage = "https://github.com/MegatonHammer/linkle/"
 repository = "https://github.com/MegatonHammer/linkle/"
+edition = "2018"
 
 [[bin]]
 name = "linkle"

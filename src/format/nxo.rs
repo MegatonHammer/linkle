@@ -1,7 +1,7 @@
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use elf;
 use elf::types::{EM_AARCH64, ProgramHeader, PT_LOAD, SHT_NOTE};
-use format::{utils, romfs::RomFs, nacp::NacpFile};
+use crate::format::{utils, romfs::RomFs, nacp::NacpFile};
 use std;
 use std::fs::File;
 use std::io::{self, Cursor, Seek, SeekFrom, Write};

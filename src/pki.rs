@@ -4,7 +4,7 @@ use failure::Backtrace;
 use std::fs::File;
 use std::io::{self, ErrorKind};
 use std::path::Path;
-use error::Error;
+use crate::error::Error;
 use aes::Aes128;
 use block_modes::{Ctr128, BlockModeIv, BlockMode};
 use block_modes::block_padding::ZeroPadding;
@@ -20,7 +20,7 @@ struct Modulus([u8; 0x100]);
 macro_rules! impl_debug {
     ($for:ident) => {
         impl fmt::Debug for $for {
-            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 for byte in &self.0[..] {
                     write!(f, "{:02X}", byte)?;
                 }
