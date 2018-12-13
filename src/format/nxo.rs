@@ -43,10 +43,10 @@ where
             }
             build_id_data.resize(0x30, 0);
             // skip the tag nhdr
-            output_writter.write(&build_id_data[0x10..])?;
+            output_writter.write_all(&build_id_data[0x10..])?;
         }
         None => {
-            output_writter.write(&[0; 0x20])?;
+            output_writter.write_all(&[0; 0x20])?;
         }
     }
     Ok(())
@@ -94,17 +94,16 @@ impl NxoFile {
         let build_id = sections
             .into_iter()
             .filter(|&x| {
-                match x.shdr.shtype == SHT_NOTE {
-                    true => {
-                        let mut data = Cursor::new(x.data.clone());
-                        // Ignore the two first offset of nhdr32
-                        data.seek(SeekFrom::Start(0x8)).unwrap();
-                        let n_type = data.read_u32::<LittleEndian>().unwrap();
+                if x.shdr.shtype == SHT_NOTE {
+                    let mut data = Cursor::new(x.data.clone());
+                    // Ignore the two first offset of nhdr32
+                    data.seek(SeekFrom::Start(0x8)).unwrap();
+                    let n_type = data.read_u32::<LittleEndian>().unwrap();
 
-                        // BUILD_ID
-                        n_type == 0x3
-                    }
-                    false => false,
+                    // BUILD_ID
+                    n_type == 0x3
+                } else {
+                    false
                 }
             })
             .map(|section| section.data.clone())
@@ -115,8 +114,8 @@ impl NxoFile {
             text_section: *text_section,
             rodata_section: *rodata_section,
             data_section: *data_section,
-            bss_section: bss_section,
-            build_id: build_id,
+            bss_section,
+            build_id,
         })
     }
 
@@ -142,20 +141,17 @@ impl NxoFile {
         pad_segment(&mut code, 0, rodata_section);
         pad_segment(&mut rodata, code.len(), data_section);
 
-        match self.bss_section {
-            Some(section) => {
-                pad_segment(&mut data, code.len() + rodata.len(), &section);
-            }
-            _ => (),
+        if let Some(section) = self.bss_section {
+            pad_segment(&mut data, code.len() + rodata.len(), &section);
         }
 
         let total_len: u32 = (code.len() + rodata.len() + data.len()) as u32;
 
         // Write the first branching and mod0 offset
-        output_writter.write(&code[..0x10])?;
+        output_writter.write_all(&code[..0x10])?;
 
         // NRO magic
-        output_writter.write(b"NRO0")?;
+        output_writter.write_all(b"NRO0")?;
         // Unknown
         output_writter.write_u32::<LittleEndian>(0)?;
         // Total size
@@ -187,7 +183,7 @@ impl NxoFile {
         // BSS size
         match self.bss_section {
             Some(section) => {
-                if section.vaddr != file_offset as u64 {
+                if section.vaddr != u64::from(file_offset) {
                     println!(
                     "Warning: possible misalign bss\n.bss addr: 0x{:x}\nexpected offset: 0x{:x}",
                     section.vaddr, file_offset);
@@ -219,14 +215,13 @@ impl NxoFile {
         output_writter.write_u64::<LittleEndian>(0)?;
         output_writter.write_u64::<LittleEndian>(0)?;
 
-        output_writter.write(&code[0x80..])?;
-        output_writter.write(&rodata)?;
-        output_writter.write(&data)?;
+        output_writter.write_all(&code[0x80..])?;
+        output_writter.write_all(&rodata)?;
+        output_writter.write_all(&data)?;
 
         // Early return if there's no need for an ASET section.
-        match (&icon, &romfs, &nacp) {
-            (None, None, None) => return Ok(()),
-            _ => ()
+        if let (None, None, None) = (&icon, &romfs, &nacp) {
+            return Ok(())
         }
 
         // Aset handling
@@ -303,15 +298,12 @@ impl NxoFile {
         utils::add_padding(&mut data, 0xFFF);
 
         // Because bss doesn't have it's own segment in NSO, we need to pad .data to the .bss vaddr
-        match self.bss_section {
-            Some(section) => {
-                pad_segment(&mut data, data_section.vaddr as usize, &section);
-            }
-            _ => (),
+        if let Some(section) = self.bss_section {
+            pad_segment(&mut data, data_section.vaddr as usize, &section);
         }
 
         // NSO magic
-        output_writter.write(b"NSO0")?;
+        output_writter.write_all(b"NSO0")?;
         // Unknown
         output_writter.write_u32::<LittleEndian>(0)?;
         // Unknown
@@ -398,20 +390,20 @@ impl NxoFile {
 
         // .text sha256
         let text_sum = utils::calculate_sha256(&code)?;
-        output_writter.write(&text_sum)?;
+        output_writter.write_all(&text_sum)?;
 
         // .rodata sha256
         let rodata_sum = utils::calculate_sha256(&rodata)?;
-        output_writter.write(&rodata_sum)?;
+        output_writter.write_all(&rodata_sum)?;
 
         // .data sha256
         let data_sum = utils::calculate_sha256(&data)?;
-        output_writter.write(&data_sum)?;
+        output_writter.write_all(&data_sum)?;
 
         // compressed data
-        output_writter.write(&compressed_code)?;
-        output_writter.write(&compressed_rodata)?;
-        output_writter.write(&compressed_data)?;
+        output_writter.write_all(&compressed_code)?;
+        output_writter.write_all(&compressed_rodata)?;
+        output_writter.write_all(&compressed_data)?;
         Ok(())
     }
 }

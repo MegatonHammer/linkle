@@ -9,7 +9,7 @@ pub fn align(size: usize, padding: usize) -> usize {
     ((size as usize) + padding) & !padding
 }
 
-pub fn add_padding(vec: &mut Vec<u8>, padding: usize) -> () {
+pub fn add_padding(vec: &mut Vec<u8>, padding: usize) {
     let real_size = vec.len();
     vec.resize(align(real_size, padding), 0);
 }
@@ -27,15 +27,15 @@ pub fn get_section_data(
 ) -> std::io::Result<Vec<u8>> {
     let mut data = vec![0; header.filesz as usize];
     file.seek(SeekFrom::Start(header.offset))?;
-    file.read(&mut data)?;
+    file.read_exact(&mut data)?;
     Ok(data)
 }
 
 pub fn compress_lz4(uncompressed_data: &mut Vec<u8>) -> std::io::Result<Vec<u8>> {
-    lz4::block::compress(&mut uncompressed_data[..], None, false)
+    lz4::block::compress(&uncompressed_data[..], None, false)
 }
 
-pub fn calculate_sha256(data: &Vec<u8>) -> std::io::Result<Vec<u8>> {
+pub fn calculate_sha256(data: &[u8]) -> std::io::Result<Vec<u8>> {
     let mut hasher = Sha256::default();
     hasher.input(data);
     Ok(Vec::from(hasher.result().as_slice()))

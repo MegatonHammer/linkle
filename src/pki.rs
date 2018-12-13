@@ -213,6 +213,7 @@ fn generate_kek(src: &Aes128Key, master_key: &Aes128Key, kek_seed: &Aes128Key, k
 }
 
 impl Keys {
+    #[allow(clippy::new_ret_no_self)]
     fn new(key_path: Option<&Path>, default_key_name: &Path, modulus: (Modulus, Modulus, Modulus)) -> Result<Keys, Error> {
         let (modulus0, modulus1, modulus2) = modulus;
         let mut keys = Keys {
@@ -448,6 +449,7 @@ impl Keys {
                 }
 
                 /* Derive Header Key */
+                #[allow(clippy::single_match)]
                 match (i, &self.header_kek_source, &self.header_key_source, &self.aes_kek_generation_source, &self.aes_key_generation_source) {
                     (0, Some(header_kek_source), Some(header_key_source), Some(aes_kek_generation_source), Some(aes_key_generation_source)) => {
                         let header_kek = generate_kek(&header_kek_source, master_key, &aes_kek_generation_source, &aes_key_generation_source)?;

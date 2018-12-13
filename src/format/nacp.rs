@@ -55,6 +55,7 @@ pub struct NacpFile {
     pub lang: Option<NacpLangEntries>,
 }
 
+#[allow(clippy::len_without_is_empty)]
 impl NacpFile {
     pub fn from_file(input: &str) -> std::io::Result<Self> {
         let file = File::open(input)?;
@@ -74,13 +75,13 @@ impl NacpFile {
     {
         let name = &lang_entry.name;
         let name_padding = 0x200 - name.len();
-        output_writter.write(name.as_bytes())?;
-        output_writter.write(&vec![0; name_padding])?;
+        output_writter.write_all(name.as_bytes())?;
+        output_writter.write_all(&vec![0; name_padding])?;
 
         let author = &lang_entry.author;
         let author_padding = 0x100 - author.len();
-        output_writter.write(author.as_bytes())?;
-        output_writter.write(&vec![0; author_padding])?;
+        output_writter.write_all(author.as_bytes())?;
+        output_writter.write_all(&vec![0; author_padding])?;
         Ok(())
     }
 
@@ -96,9 +97,9 @@ impl NacpFile {
         let mut name = self
             .name
             .clone()
-            .unwrap_or("Unknown Application".to_string());
-        let mut version = self.version.clone().unwrap_or("1.0.0".to_string());
-        let mut author = self.author.clone().unwrap_or("Unknown Author".to_string());
+            .unwrap_or_else(|| "Unknown Application".to_string());
+        let mut version = self.version.clone().unwrap_or_else(|| "1.0.0".to_string());
+        let mut author = self.author.clone().unwrap_or_else(|| "Unknown Author".to_string());
 
         let title_id = match &self.title_id {
             None => 0,
@@ -130,7 +131,7 @@ impl NacpFile {
                 }
             }
             Some(data) => {
-                let lang_entries = data.clone();
+                let lang_entries = data;
 
                 // Write every langs in order
                 self.write_lang_entry(
@@ -138,105 +139,105 @@ impl NacpFile {
                     &lang_entries
                         .en_us
                         .clone()
-                        .unwrap_or(default_lang_entry.clone()),
+                        .unwrap_or_else(|| default_lang_entry.clone()),
                 )?;
                 self.write_lang_entry(
                     output_writter,
                     &lang_entries
                         .en_gb
                         .clone()
-                        .unwrap_or(default_lang_entry.clone()),
+                        .unwrap_or_else(|| default_lang_entry.clone()),
                 )?;
                 self.write_lang_entry(
                     output_writter,
                     &lang_entries
                         .ja
                         .clone()
-                        .unwrap_or(default_lang_entry.clone()),
+                        .unwrap_or_else(|| default_lang_entry.clone()),
                 )?;
                 self.write_lang_entry(
                     output_writter,
                     &lang_entries
                         .fr
                         .clone()
-                        .unwrap_or(default_lang_entry.clone()),
+                        .unwrap_or_else(|| default_lang_entry.clone()),
                 )?;
                 self.write_lang_entry(
                     output_writter,
                     &lang_entries
                         .de
                         .clone()
-                        .unwrap_or(default_lang_entry.clone()),
+                        .unwrap_or_else(|| default_lang_entry.clone()),
                 )?;
                 self.write_lang_entry(
                     output_writter,
                     &lang_entries
                         .es_419
                         .clone()
-                        .unwrap_or(default_lang_entry.clone()),
+                        .unwrap_or_else(|| default_lang_entry.clone()),
                 )?;
                 self.write_lang_entry(
                     output_writter,
                     &lang_entries
                         .es
                         .clone()
-                        .unwrap_or(default_lang_entry.clone()),
+                        .unwrap_or_else(|| default_lang_entry.clone()),
                 )?;
                 self.write_lang_entry(
                     output_writter,
                     &lang_entries
                         .it
                         .clone()
-                        .unwrap_or(default_lang_entry.clone()),
+                        .unwrap_or_else(|| default_lang_entry.clone()),
                 )?;
                 self.write_lang_entry(
                     output_writter,
                     &lang_entries
                         .nl
                         .clone()
-                        .unwrap_or(default_lang_entry.clone()),
+                        .unwrap_or_else(|| default_lang_entry.clone()),
                 )?;
                 self.write_lang_entry(
                     output_writter,
                     &lang_entries
                         .fr_ca
                         .clone()
-                        .unwrap_or(default_lang_entry.clone()),
+                        .unwrap_or_else(|| default_lang_entry.clone()),
                 )?;
                 self.write_lang_entry(
                     output_writter,
                     &lang_entries
                         .pt
                         .clone()
-                        .unwrap_or(default_lang_entry.clone()),
+                        .unwrap_or_else(|| default_lang_entry.clone()),
                 )?;
                 self.write_lang_entry(
                     output_writter,
                     &lang_entries
                         .ru
                         .clone()
-                        .unwrap_or(default_lang_entry.clone()),
+                        .unwrap_or_else(|| default_lang_entry.clone()),
                 )?;
                 self.write_lang_entry(
                     output_writter,
                     &lang_entries
                         .ko
                         .clone()
-                        .unwrap_or(default_lang_entry.clone()),
+                        .unwrap_or_else(|| default_lang_entry.clone()),
                 )?;
                 self.write_lang_entry(
                     output_writter,
                     &lang_entries
                         .zh_tw
                         .clone()
-                        .unwrap_or(default_lang_entry.clone()),
+                        .unwrap_or_else(|| default_lang_entry.clone()),
                 )?;
                 self.write_lang_entry(
                     output_writter,
                     &lang_entries
                         .zh_cn
                         .clone()
-                        .unwrap_or(default_lang_entry.clone()),
+                        .unwrap_or_else(|| default_lang_entry.clone()),
                 )?;
                 // There are 16 entries. One is missing :eyes:
                 self.write_lang_entry(output_writter, &default_lang_entry)?;
@@ -244,31 +245,31 @@ impl NacpFile {
         }
 
         // 0x3000 - 0x3038: Unknown
-        output_writter.write(&[0; 0x38])?;
+        output_writter.write_all(&[0; 0x38])?;
 
         output_writter.write_u64::<LittleEndian>(title_id)?;
 
         // Unknown 0x20 bytes
         let mut unknown = Vec::new();
         unknown.resize(0x20, 0xFF);
-        output_writter.write(&unknown)?;
+        output_writter.write_all(&unknown)?;
 
         // Version string part (probably UTF8)
         let version_padding = 0x10 - version.len();
-        output_writter.write(version.as_bytes())?;
-        output_writter.write(&vec![0; version_padding])?;
+        output_writter.write_all(version.as_bytes())?;
+        output_writter.write_all(&vec![0; version_padding])?;
 
         output_writter.write_u64::<LittleEndian>(dlc_base_title_id)?;
         output_writter.write_u64::<LittleEndian>(title_id)?;
 
         //  0x3080 - 0x30B0: Unknown
-        output_writter.write(&[0; 0x30])?;
+        output_writter.write_all(&[0; 0x30])?;
 
         output_writter.write_u64::<LittleEndian>(title_id)?;
 
         // title id array (0x7 entries), only write the base, other entries seems to be for update titles
         output_writter.write_u64::<LittleEndian>(title_id)?;
-        output_writter.write(&[0; 0x30])?;
+        output_writter.write_all(&[0; 0x30])?;
 
         // 0x30F0 - 0x30F8: Unknown
         output_writter.write_u64::<LittleEndian>(0)?;
@@ -276,7 +277,7 @@ impl NacpFile {
 
         let mut end_of_file = Vec::new();
         end_of_file.resize(0xF00, 0);
-        output_writter.write(&end_of_file)?;
+        output_writter.write_all(&end_of_file)?;
 
         Ok(())
     }
