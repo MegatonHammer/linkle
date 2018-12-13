@@ -1,5 +1,5 @@
 use byteorder::{LittleEndian, WriteBytesExt};
-use format::utils;
+use crate::format::utils;
 use std;
 use std::fs::File;
 use std::io::Read;
@@ -19,11 +19,10 @@ impl Pfs0File {
         for entry_res in std::fs::read_dir(path)? {
             let entry = entry_res?;
             let entry_path = &entry.path();
-            match entry_path.is_dir() {
-                true => println!("Ignoring directory \"{}\"", entry_path.display()),
-                false => {
-                    files.push(entry_path.clone());
-                }
+            if entry_path.is_dir() {
+                println!("Ignoring directory \"{}\"", entry_path.display());
+            } else {
+                files.push(entry_path.clone());
             }
         }
         Ok(Pfs0File { files })
@@ -37,13 +36,13 @@ impl Pfs0File {
         let file_count = paths.len() as u32;
 
         // Header
-        output_writter.write(b"PFS0")?;
+        output_writter.write_all(b"PFS0")?;
         output_writter.write_u32::<LittleEndian>(file_count)?;
         let string_table_size = utils::align(
             paths
                 .iter()
                 .map(|x| x.file_name().unwrap().to_str().unwrap().len() + 1)
-                .fold(0, |acc, x| acc + x),
+                .sum(),
             0x1F,
         );
         output_writter.write_u32::<LittleEndian>(string_table_size as u32)?;
@@ -56,13 +55,12 @@ impl Pfs0File {
         // Create empty tabes
         let mut empty_tables = Vec::new();
         empty_tables.resize(data_pos as usize - 0x10, 0);
-        output_writter.write(&empty_tables)?;
+        output_writter.write_all(&empty_tables)?;
 
         let mut string_offset = 0;
         let mut data_offset = 0;
-        let mut file_index = 0;
 
-        for path in paths {
+        for (file_index, path) in paths.iter().enumerate().map(|(idx, path)| (idx as u64, path))  {
             // Seek and write file name to string table
             output_writter
                 .seek(SeekFrom::Start(string_table_pos + string_offset))
@@ -74,8 +72,8 @@ impl Pfs0File {
                 file_index + 1,
                 file_count
             );
-            output_writter.write(file_name.as_bytes())?;
-            output_writter.write(b"\0")?;
+            output_writter.write_all(file_name.as_bytes())?;
+            output_writter.write_all(b"\0")?;
 
             // Open the file and retrieve the size of it
             let mut file = File::open(path)?;
@@ -99,12 +97,11 @@ impl Pfs0File {
                 if n == 0 {
                     break;
                 }
-                output_writter.write(&buffer[..n])?;
+                output_writter.write_all(&buffer[..n])?;
             }
 
             data_offset += file_size;
             string_offset += file_name.len() as u64 + 1;
-            file_index += 1;
         }
 
         Ok(())

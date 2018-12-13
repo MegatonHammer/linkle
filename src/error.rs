@@ -2,6 +2,7 @@ use std::io;
 use ini;
 use failure::Backtrace;
 use block_modes::BlockModeError;
+use failure::Fail;
 
 #[derive(Debug, Fail)]
 pub enum Error {

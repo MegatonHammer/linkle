@@ -35,7 +35,7 @@ fn find_project_root(path: &Path) -> Option<&Path> {
 
 
 // TODO: Run cargo build --help to get the list of options!
-const CARGO_OPTIONS: &'static str = "CARGO OPTIONS:
+const CARGO_OPTIONS: &str = "CARGO OPTIONS:
     -p, --package <SPEC>...         Package to build
         --all                       Build all packages in the workspace
         --exclude <SPEC>...         Exclude packages from the build
@@ -72,7 +72,7 @@ const CARGO_OPTIONS: &'static str = "CARGO OPTIONS:
 fn get_metadata(manifest_path: &Path, package_id: &str, target_name: &str) -> (Package, PackageMetadata) {
     let metadata = cargo_metadata::metadata(Some(&manifest_path)).unwrap();
     let package = metadata.packages.into_iter().find(|v| v.id == package_id).unwrap();
-    let package_metadata = serde_json::from_value(package.metadata.pointer(&format!("linkle/{}", target_name)).cloned().unwrap_or(serde_json::Value::Null)).unwrap_or(PackageMetadata::default());
+    let package_metadata = serde_json::from_value(package.metadata.pointer(&format!("linkle/{}", target_name)).cloned().unwrap_or(serde_json::Value::Null)).unwrap_or_default();
     (package, package_metadata)
 }
 
@@ -171,7 +171,7 @@ fn generate_debuginfo_romfs<P: AsRef<Path>>(elf_path: &Path, romfs: Option<P>) -
         RomFs::empty()
     };
 
-    romfs.push_file(&new_file, String::from("debug_info.elf"))?;
+    romfs.push_file(&new_file, "debug_info.elf")?;
 
     Ok(romfs)
 }
@@ -277,7 +277,7 @@ fn main() {
                 let icon_file = icon_file.map(|v| v.to_string_lossy().into_owned());
                 let icon_file = icon_file.as_ref().map(|v| v.as_ref());
 
-                let mut nacp = target_metadata.nacp.unwrap_or(Default::default());
+                let mut nacp = target_metadata.nacp.unwrap_or_default();
                 nacp.name.get_or_insert(package.name);
                 nacp.author.get_or_insert(package.authors[0].clone());
                 nacp.version.get_or_insert(package.version);

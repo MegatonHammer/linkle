@@ -9,7 +9,12 @@ main() {
     else
         cross=cross
     fi
+
     $cross build --target $TARGET --release --all-features
+
+    if [ ! -z $ENABLE_CLIPPY ]; then
+        $cross clippy --all-features -- -D warnings
+    fi
 
     if [ ! -z $DISABLE_TESTS ]; then
         return

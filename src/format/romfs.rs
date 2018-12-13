@@ -71,10 +71,12 @@ struct RomFsFileEntryHdr {
 }
 
 impl RomFsDirEntCtx {
+    #[allow(clippy::new_ret_no_self)]
     fn new(parent: Weak<RefCell<RomFsDirEntCtx>>, path: PathBuf) -> Rc<RefCell<RomFsDirEntCtx>> {
+        let filename = path.file_name().expect("Path to terminate properly").to_str().expect("Path to contain non-unicode chars").into();
         Rc::new(RefCell::new(RomFsDirEntCtx {
-            system_path: path.clone(),
-            name: path.file_name().expect("Path to terminate properly").to_str().expect("Path to contain non-unicode chars").into(),
+            system_path: path,
+            name: filename,
             entry_offset: 0,
             parent,
             child: vec![],
@@ -133,10 +135,10 @@ fn align64(offset: u64, align: u64) -> u64 {
 
 fn calc_path_hash(parent: u32, path: &str) -> u32 {
     // Magic algorithm. This likely comes straight from RE'd come from nintendo.
-    let mut hash = parent ^ 123456789;
+    let mut hash = parent ^ 123_456_789;
     for c in path.as_bytes() {
         hash = (hash >> 5) | (hash << 27);
-        hash ^= *c as u32;
+        hash ^= u32::from(*c);
     }
     hash
 }
@@ -154,12 +156,13 @@ pub struct RomFs {
     file_partition_size: u64,
 }
 
+#[allow(clippy::len_without_is_empty)]
 impl RomFs {
     // Internal path
-    pub fn push_file(&mut self, file_path: &Path, internal_path: String) -> io::Result<()> {
+    pub fn push_file(&mut self, file_path: &Path, internal_path: &str) -> io::Result<()> {
         let mut parent = self.dirs[0].clone();
 
-        let mut components = internal_path.split("/").peekable();
+        let mut components = internal_path.split('/').peekable();
         while let Some(component) = components.next() {
             if components.peek().is_none() {
                 let metadata = file_path.metadata()?;
@@ -339,8 +342,8 @@ impl RomFs {
     }
 
 
-    pub fn write(&self, to: &mut Write) -> io::Result<()> {
-        const ROMFS_ENTRY_EMPTY: u32 = 0xFFFFFFFF;
+    pub fn write(&self, to: &mut dyn Write) -> io::Result<()> {
+        const ROMFS_ENTRY_EMPTY: u32 = 0xFF_FF_FF_FF;
 
         let mut dir_hash_table = vec![ROMFS_ENTRY_EMPTY; romfs_get_hash_table_count(self.dirs.len())];
         let mut file_hash_table = vec![ROMFS_ENTRY_EMPTY; romfs_get_hash_table_count(self.files.len())];

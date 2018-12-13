@@ -67,7 +67,7 @@ enum Opt {
     },
 }
 
-fn create_nxo(format: &str, input_file: String, output_file: String, icon_file: Option<String>, romfs_dir: Option<String>, nacp_file: Option<String>) -> std::io::Result<()> {
+fn create_nxo(format: &str, input_file: &str, output_file: &str, icon_file: Option<&str>, romfs_dir: Option<&str>, nacp_file: Option<&str>) -> std::io::Result<()> {
     let romfs_dir = if let Some(romfs_path) = romfs_dir {
         Some(linkle::format::romfs::RomFs::from_directory(Path::new(&romfs_path))?)
     } else {
@@ -89,7 +89,7 @@ fn create_nxo(format: &str, input_file: String, output_file: String, icon_file: 
     }
 }
 
-fn create_pfs0(input_directory: String, output_file: String) -> std::io::Result<()> {
+fn create_pfs0(input_directory: &str, output_file: &str) -> std::io::Result<()> {
     let mut pfs0 = linkle::format::pfs0::Pfs0File::from_directory(&input_directory)?;
     let mut option = OpenOptions::new();
     let output_option = option.write(true).create(true).truncate(true);
@@ -97,7 +97,7 @@ fn create_pfs0(input_directory: String, output_file: String) -> std::io::Result<
     Ok(())
 }
 
-fn create_nacp(input_file: String, output_file: String) -> std::io::Result<()> {
+fn create_nacp(input_file: &str, output_file: &str) -> std::io::Result<()> {
     let mut nacp = linkle::format::nacp::NacpFile::from_file(&input_file)?;
     let mut option = OpenOptions::new();
     let output_option = option.write(true).create(true).truncate(true);
@@ -105,7 +105,7 @@ fn create_nacp(input_file: String, output_file: String) -> std::io::Result<()> {
     Ok(())
 }
 
-fn create_romfs(input_directory: PathBuf, output_file: PathBuf) -> std::io::Result<()> {
+fn create_romfs(input_directory: &Path, output_file: &Path) -> std::io::Result<()> {
     let romfs = linkle::format::romfs::RomFs::from_directory(&input_directory)?;
     let mut option = OpenOptions::new();
     let output_option = option.write(true).create(true).truncate(true);
@@ -113,25 +113,25 @@ fn create_romfs(input_directory: PathBuf, output_file: PathBuf) -> std::io::Resu
     Ok(())
 }
 
+fn to_opt_str(s: &Option<String>) -> Option<&str> {
+    s.as_ref().map(String::as_ref)
+}
 
-fn process_args(app: Opt) -> () {
+fn process_args(app: &Opt) {
     let res = match app {
-        Opt::Nro { input_file, output_file, icon, romfs, nacp } => create_nxo("nro", input_file, output_file, icon, romfs, nacp),
-        Opt::Nso { input_file, output_file } => create_nxo("nro", input_file, output_file, None, None, None),
-        Opt::Pfs0 { input_directory, output_file } => create_pfs0(input_directory, output_file),
-        Opt::Nacp { input_file, output_file } => create_nacp(input_file, output_file),
-        Opt::Romfs { input_directory, output_file } => create_romfs(input_directory, output_file),
+        Opt::Nro { ref input_file, ref output_file, ref icon, ref romfs, ref nacp } => create_nxo("nro", input_file, output_file, to_opt_str(icon), to_opt_str(romfs), to_opt_str(nacp)),
+        Opt::Nso { ref input_file, ref output_file } => create_nxo("nro", input_file, output_file, None, None, None),
+        Opt::Pfs0 { ref input_directory, ref output_file } => create_pfs0(input_directory, output_file),
+        Opt::Nacp { ref input_file, ref output_file } => create_nacp(input_file, output_file),
+        Opt::Romfs { ref input_directory, ref output_file } => create_romfs(input_directory, output_file),
     };
 
-    match res {
-        Err(e) => {
-            println!("Error: {:?}", e);
-            process::exit(1)
-        }
-        _ => (),
+    if let Err(e) = res {
+        println!("Error: {:?}", e);
+        process::exit(1)
     }
 }
 
 fn main() {
-    process_args(Opt::from_args());
+    process_args(&Opt::from_args());
 }

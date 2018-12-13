@@ -10,12 +10,16 @@ main() {
         # Let's have the script run cargo instead of cross.
         # Make sure the target is installed though.
         rustup target install $TARGET
-        choco install strawberryperl
         exit
     else
         target=x86_64-apple-darwin
         sort=gsort  # for `sort --sort-version`, from brew's coreutils.
     fi
+
+    if [ ! -z $ENABLE_CLIPPY ]; then
+        rustup component add clippy
+    fi
+
 
     # Builds for iOS are done on OSX, but require the specific target to be
     # installed.
