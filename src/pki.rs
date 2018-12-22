@@ -12,24 +12,6 @@ use aes::block_cipher_trait::generic_array::GenericArray;
 use aes::block_cipher_trait::BlockCipher;
 use getset::Getters;
 
-macro_rules! impl_debug {
-    ($for:ident) => {
-        impl fmt::Debug for $for {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                for byte in &self.0[..] {
-                    write!(f, "{:02X}", byte)?;
-                }
-                Ok(())
-            }
-        }
-    }
-}
-
-impl_debug!(Aes128Key);
-impl_debug!(AesXtsKey);
-impl_debug!(EncryptedKeyblob);
-impl_debug!(Keyblob);
-impl_debug!(Modulus);
 #[derive(Clone, Copy)]
 pub struct Aes128Key([u8; 0x10]);
 #[derive(Clone, Copy)]
@@ -37,6 +19,12 @@ pub struct AesXtsKey([u8; 0x20]);
 pub struct EncryptedKeyblob([u8; 0xB0]);
 pub struct Keyblob([u8; 0x90]);
 pub struct Modulus([u8; 0x100]);
+
+impl_debug_deserialize_serialize_hexstring!(Aes128Key);
+impl_debug_deserialize_serialize_hexstring!(AesXtsKey);
+impl_debug_deserialize_serialize_hexstring!(EncryptedKeyblob);
+impl_debug_deserialize_serialize_hexstring!(Keyblob);
+impl_debug_deserialize_serialize_hexstring!(Modulus);
 
 impl EncryptedKeyblob {
     fn decrypt(&self, key: &Aes128Key) -> Result<Keyblob, Error> {
