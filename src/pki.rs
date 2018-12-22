@@ -10,12 +10,7 @@ use block_modes::{Ctr128, BlockModeIv, BlockMode};
 use block_modes::block_padding::ZeroPadding;
 use aes::block_cipher_trait::generic_array::GenericArray;
 use aes::block_cipher_trait::BlockCipher;
-
-struct Aes128Key([u8; 0x10]);
-struct AesXtsKey([u8; 0x20]);
-struct EncryptedKeyblob([u8; 0xB0]);
-struct Keyblob([u8; 0x90]);
-struct Modulus([u8; 0x100]);
+use getset::Getters;
 
 macro_rules! impl_debug {
     ($for:ident) => {
@@ -35,6 +30,13 @@ impl_debug!(AesXtsKey);
 impl_debug!(EncryptedKeyblob);
 impl_debug!(Keyblob);
 impl_debug!(Modulus);
+#[derive(Clone, Copy)]
+pub struct Aes128Key([u8; 0x10]);
+#[derive(Clone, Copy)]
+pub struct AesXtsKey([u8; 0x20]);
+pub struct EncryptedKeyblob([u8; 0xB0]);
+pub struct Keyblob([u8; 0x90]);
+pub struct Modulus([u8; 0x100]);
 
 impl EncryptedKeyblob {
     fn decrypt(&self, key: &Aes128Key) -> Result<Keyblob, Error> {
@@ -49,7 +51,7 @@ impl EncryptedKeyblob {
 }
 
 impl Aes128Key {
-    fn derive_key(&self, source: &[u8; 0x10]) -> Result<Aes128Key, Error> {
+    pub fn derive_key(&self, source: &[u8; 0x10]) -> Result<Aes128Key, Error> {
         let mut newkey = *source;
 
         let crypter = Aes128::new(GenericArray::from_slice(&self.0));
@@ -58,7 +60,7 @@ impl Aes128Key {
         Ok(Aes128Key(newkey))
     }
 
-    fn derive_xts_key(&self, source: &[u8; 0x20]) -> Result<AesXtsKey, Error> {
+    pub fn derive_xts_key(&self, source: &[u8; 0x20]) -> Result<AesXtsKey, Error> {
         let mut newkey = *source;
 
         let crypter = Aes128::new(GenericArray::from_slice(&self.0));
@@ -107,47 +109,47 @@ impl<T> OptionExt for Option<T> {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Getters)]
 pub struct Keys {
-    secure_boot_key: Option<Aes128Key>,
-    tsec_key: Option<Aes128Key>,
-    keyblob_keys: [Option<Aes128Key>; 0x20],
-    keyblob_mac_keys: [Option<Aes128Key>; 0x20],
-    encrypted_keyblobs: [Option<EncryptedKeyblob>; 0x20],
-    keyblobs: [Option<Keyblob>; 0x20],
-    keyblob_key_sources: [Option<Aes128Key>; 0x20],
-    keyblob_mac_key_source: Option<Aes128Key>,
-    tsec_root_key: Option<Aes128Key>,
-    master_kek_sources: [Option<Aes128Key>; 0x20],
-    master_keks: [Option<Aes128Key>; 0x20],
-    master_key_source: Option<Aes128Key>,
-    master_keys: [Option<Aes128Key>; 0x20],
-    package1_keys: [Option<Aes128Key>; 0x20],
-    package2_keys: [Option<Aes128Key>; 0x20],
-    package2_key_source: Option<Aes128Key>,
-    aes_kek_generation_source: Option<Aes128Key>,
-    aes_key_generation_source: Option<Aes128Key>,
-    key_area_key_application_source: Option<Aes128Key>,
-    key_area_key_ocean_source: Option<Aes128Key>,
-    key_area_key_system_source: Option<Aes128Key>,
-    titlekek_source: Option<Aes128Key>,
-    header_kek_source: Option<Aes128Key>,
-    sd_card_kek_source: Option<Aes128Key>,
-    sd_card_save_key_source: Option<AesXtsKey>,
-    sd_card_nca_key_source: Option<AesXtsKey>,
-    save_mac_kek_source: Option<Aes128Key>,
-    save_mac_key_source: Option<Aes128Key>,
-    header_key_source: Option<AesXtsKey>,
-    header_key: Option<AesXtsKey>,
-    titlekeks: [Option<Aes128Key>; 0x20],
-    key_area_key_application: [Option<Aes128Key>; 0x20],
-    key_area_key_ocean: [Option<Aes128Key>; 0x20],
-    key_area_key_system: [Option<Aes128Key>; 0x20],
-    sd_card_save_key: Option<AesXtsKey>,
-    sd_card_nca_key: Option<AesXtsKey>,
-    nca_hdr_fixed_key_modulus: Option<Modulus>,
-    acid_fixed_key_modulus: Option<Modulus>,
-    package2_fixed_key_modulus: Option<Modulus>,
+    #[get = "pub"] secure_boot_key: Option<Aes128Key>,
+    #[get = "pub"] tsec_key: Option<Aes128Key>,
+    #[get = "pub"] keyblob_keys: [Option<Aes128Key>; 0x20],
+    #[get = "pub"] keyblob_mac_keys: [Option<Aes128Key>; 0x20],
+    #[get = "pub"] encrypted_keyblobs: [Option<EncryptedKeyblob>; 0x20],
+    #[get = "pub"] keyblobs: [Option<Keyblob>; 0x20],
+    #[get = "pub"] keyblob_key_sources: [Option<Aes128Key>; 0x20],
+    #[get = "pub"] keyblob_mac_key_source: Option<Aes128Key>,
+    #[get = "pub"] tsec_root_key: Option<Aes128Key>,
+    #[get = "pub"] master_kek_sources: [Option<Aes128Key>; 0x20],
+    #[get = "pub"] master_keks: [Option<Aes128Key>; 0x20],
+    #[get = "pub"] master_key_source: Option<Aes128Key>,
+    #[get = "pub"] master_keys: [Option<Aes128Key>; 0x20],
+    #[get = "pub"] package1_keys: [Option<Aes128Key>; 0x20],
+    #[get = "pub"] package2_keys: [Option<Aes128Key>; 0x20],
+    #[get = "pub"] package2_key_source: Option<Aes128Key>,
+    #[get = "pub"] aes_kek_generation_source: Option<Aes128Key>,
+    #[get = "pub"] aes_key_generation_source: Option<Aes128Key>,
+    #[get = "pub"] key_area_key_application_source: Option<Aes128Key>,
+    #[get = "pub"] key_area_key_ocean_source: Option<Aes128Key>,
+    #[get = "pub"] key_area_key_system_source: Option<Aes128Key>,
+    #[get = "pub"] titlekek_source: Option<Aes128Key>,
+    #[get = "pub"] header_kek_source: Option<Aes128Key>,
+    #[get = "pub"] sd_card_kek_source: Option<Aes128Key>,
+    #[get = "pub"] sd_card_save_key_source: Option<AesXtsKey>,
+    #[get = "pub"] sd_card_nca_key_source: Option<AesXtsKey>,
+    #[get = "pub"] save_mac_kek_source: Option<Aes128Key>,
+    #[get = "pub"] save_mac_key_source: Option<Aes128Key>,
+    #[get = "pub"] header_key_source: Option<AesXtsKey>,
+    #[get = "pub"] header_key: Option<AesXtsKey>,
+    #[get = "pub"] titlekeks: [Option<Aes128Key>; 0x20],
+    #[get = "pub"] key_area_key_application: [Option<Aes128Key>; 0x20],
+    #[get = "pub"] key_area_key_ocean: [Option<Aes128Key>; 0x20],
+    #[get = "pub"] key_area_key_system: [Option<Aes128Key>; 0x20],
+    #[get = "pub"] sd_card_save_key: Option<AesXtsKey>,
+    #[get = "pub"] sd_card_nca_key: Option<AesXtsKey>,
+    #[get = "pub"] nca_hdr_fixed_key_modulus: Option<Modulus>,
+    #[get = "pub"] acid_fixed_key_modulus: Option<Modulus>,
+    #[get = "pub"] package2_fixed_key_modulus: Option<Modulus>,
 }
 
 macro_rules! make_key_macros {
