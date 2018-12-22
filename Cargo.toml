@@ -42,3 +42,6 @@ derive_more = "0.13"
 
 [features]
 binaries = ["structopt", "cargo_metadata", "scroll", "goblin"]
+
+[patch.crates-io]
+block-modes = { git = 'https://github.com/roblabla/block-ciphers' }
