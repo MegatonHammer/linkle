@@ -34,6 +34,7 @@ goblin = { version = "0.0.17", optional = true }
 rust-ini = "0.13"
 failure = "0.1"
 dirs = "1.0"
+getset = "0.0.6"
 block-modes = "0.2"
 aes = "0.3"
 num-traits = "0.2"
