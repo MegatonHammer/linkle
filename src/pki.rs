@@ -6,7 +6,7 @@ use std::io::{self, ErrorKind};
 use std::path::Path;
 use crate::error::Error;
 use aes::Aes128;
-use block_modes::{Ctr128, BlockModeIv, BlockMode};
+use block_modes::{Ctr128, Xts128, BlockModeIv, BlockMode};
 use block_modes::block_padding::ZeroPadding;
 use aes::block_cipher_trait::generic_array::GenericArray;
 use aes::block_cipher_trait::BlockCipher;
@@ -39,6 +39,19 @@ impl EncryptedKeyblob {
 }
 
 impl Aes128Key {
+    /// Decrypt blocks in CTR mode.
+    pub fn decrypt_ctr(&self, buf: &mut [u8], ctr: &[u8; 0x10]) -> Result<(), Error> {
+        if buf.len() % 16 != 0 {
+            return Err(Error::Crypto(String::from("buf length should be a multiple of 16, the size of an AES block."), Backtrace::new()));
+        }
+
+        let key = GenericArray::from_slice(&self.0);
+        let iv = GenericArray::from_slice(ctr);
+        let mut crypter = Ctr128::<Aes128, ZeroPadding>::new_fixkey(key, iv);
+        crypter.decrypt_nopad(buf)?;
+        Ok(())
+    }
+
     pub fn derive_key(&self, source: &[u8; 0x10]) -> Result<Aes128Key, Error> {
         let mut newkey = *source;
 
@@ -56,7 +69,38 @@ impl Aes128Key {
         crypter.decrypt_block(GenericArray::from_mut_slice(&mut newkey[0x10..0x20]));
 
         Ok(AesXtsKey(newkey))
+    }
+}
 
+fn get_tweak(mut sector: usize) -> [u8; 0x10] {
+    let mut tweak = [0; 0x10];
+    for tweak in tweak.iter_mut().rev() { /* Nintendo LE custom tweak... */
+        *tweak = (sector & 0xFF) as u8;
+        sector >>= 8;
+    }
+    tweak
+}
+
+impl AesXtsKey {
+    pub fn decrypt(&self, src: &[u8], dst: &mut [u8], mut sector: usize, sector_size: usize) -> Result<(), Error> {
+        if src.len() != dst.len() {
+            return Err(Error::Crypto(String::from("Src len different from dst len"), Backtrace::new()));
+        }
+        if src.len() % sector_size != 0 {
+            return Err(Error::Crypto(String::from("Length must be multiple of sectors!"), Backtrace::new()));
+        }
+
+        dst.copy_from_slice(src);
+        for i in (0..src.len()).step_by(sector_size){
+            let tweak = get_tweak(sector);
+
+            let key1 = Aes128::new(GenericArray::from_slice(&self.0[0x00..0x10]));
+            let key2 = Aes128::new(GenericArray::from_slice(&self.0[0x10..0x20]));
+            let mut crypter = Xts128::<Aes128, ZeroPadding>::new(key1, key2, GenericArray::from_slice(&tweak));
+            crypter.decrypt_nopad(&mut dst[i..i + sector_size])?;
+            sector += 1;
+        }
+        Ok(())
     }
 }
 
