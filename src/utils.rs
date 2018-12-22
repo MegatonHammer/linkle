@@ -2,6 +2,30 @@ use num_traits::Num;
 use core::ops::{Not, BitAnd};
 use std::io;
 
+// TODO: Document
+#[macro_export]
+macro_rules! enum_with_val {
+    ($(#[$meta:meta])* $vis:vis struct $ident:ident($ty:ty) {
+        $($variant:ident = $num:expr),* $(,)*
+    }) => {
+        $(#[$meta])*
+        #[derive(PartialEq, Eq)]
+        $vis struct $ident($ty);
+        impl $ident {
+            $(#[allow(non_upper_case_globals)] $vis const $variant: $ident = $ident($num);)*
+        }
+
+        impl ::core::fmt::Debug for $ident {
+            fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+                match self {
+                    $(&$ident::$variant => f.write_str(stringify!($ident)),)*
+                        &$ident(v) => write!(f, "UNKNOWN({})", v),
+                }
+            }
+        }
+    }
+}
+
 pub struct Hexstring<'a>(pub &'a [u8]);
 
 impl<'a> core::fmt::Debug for Hexstring<'a> {
