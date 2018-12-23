@@ -47,6 +47,14 @@ enum Opt {
         /// Sets the output file to use.
         output_file: String,
     },
+    /// Extract a PFS0 or NSP file.
+    #[structopt(name = "pfs0_extract"/*, raw(alias = "nsp")*/)]
+    Pfs0Extract {
+        /// Sets the input PFS0 to use.
+        input_file: String,
+        /// Sets the output directory to extract the PFS0 into.
+        output_directory: String,
+    },
     /// Create a NACP file from a JSON file.
     #[structopt(name = "nacp")]
     Nacp {
@@ -121,10 +129,21 @@ fn create_nxo(format: &str, input_file: &str, output_file: &str, icon_file: Opti
 }
 
 fn create_pfs0(input_directory: &str, output_file: &str) -> std::io::Result<()> {
-    let mut pfs0 = linkle::format::pfs0::Pfs0File::from_directory(&input_directory)?;
+    let mut pfs0 = linkle::format::pfs0::Pfs0::from_directory(&input_directory)?;
     let mut option = OpenOptions::new();
     let output_option = option.write(true).create(true).truncate(true);
-    pfs0.write(&mut output_option.open(output_file)?)?;
+    pfs0.write_pfs0(&mut output_option.open(output_file)?)?;
+    Ok(())
+}
+
+fn extract_pfs0(input_file: &str, output_directory: &str) -> std::io::Result<()> {
+    let mut pfs0 = linkle::format::pfs0::Pfs0::from_file(&input_file)?;
+    let mut option = OpenOptions::new();
+    let output_option = option.write(true).create(true).truncate(true);
+    let path = Path::new(output_directory);
+    for file in pfs0.files() {
+        io::copy(file, output_option.open(path.join(file.name()))?)?;
+    }
     Ok(())
 }
 
@@ -189,6 +208,7 @@ fn process_args(app: &Opt) {
         Opt::Nro { ref input_file, ref output_file, ref icon, ref romfs, ref nacp } => create_nxo("nro", input_file, output_file, to_opt_ref(icon), to_opt_ref(romfs), to_opt_ref(nacp)),
         Opt::Nso { ref input_file, ref output_file } => create_nxo("nro", input_file, output_file, None, None, None),
         Opt::Pfs0 { ref input_directory, ref output_file } => create_pfs0(input_directory, output_file),
+        Opt::Pfs0Extract { ref input_file, ref output_directory } => extract_pfs0(input_file, output_directory),
         Opt::Nacp { ref input_file, ref output_file } => create_nacp(input_file, output_file),
         Opt::Romfs { ref input_directory, ref output_file } => create_romfs(input_directory, output_file),
         Opt::NcaExtract { ref input_file, ref header_file, ref section0_file,
