@@ -74,17 +74,14 @@ impl Cnmt {
 
 		file.seek(SeekFrom::Current(12))?;
 
-		let mut title_header = None;
-
-		match title_type {
+		let title_header = match title_type {
 			TitleType::Application | TitleType::Patch | TitleType::AddOnContent => {
-				title_header = Some(TitleHeader {
+				Some(TitleHeader {
 					title_id: file.read_u64::<LittleEndian>()?,
 					minimum_version: file.read_u32::<LittleEndian>()?
-				});
-			},
-			_ => {}
-		}
+				}),
+			_ => None
+		};
 
 		file.seek(SeekFrom::Start((0x20 + table_offset) as u64))?;
 
