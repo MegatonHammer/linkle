@@ -75,7 +75,7 @@ impl Cnmt {
 		file.seek(SeekFrom::Current(12))?;
 
 		let title_header = match title_type {
-			TitleType::Application | TitleType::Patch | TitleType::AddOnContent => {
+			TitleType::Application | TitleType::Patch | TitleType::AddOnContent =>
 				Some(TitleHeader {
 					title_id: file.read_u64::<LittleEndian>()?,
 					minimum_version: file.read_u32::<LittleEndian>()?
