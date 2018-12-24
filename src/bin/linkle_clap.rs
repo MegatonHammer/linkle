@@ -106,7 +106,7 @@ enum Opt {
     }
 }
 
-fn create_nxo(format: &str, input_file: &str, output_file: &str, icon_file: Option<&str>, romfs_dir: Option<&str>, nacp_file: Option<&str>) -> std::io::Result<()> {
+fn create_nxo(format: &str, input_file: &str, output_file: &str, icon_file: Option<&str>, romfs_dir: Option<&str>, nacp_file: Option<&str>) -> Result<(), linkle::error::Error> {
     let romfs_dir = if let Some(romfs_path) = romfs_dir {
         Some(linkle::format::romfs::RomFs::from_directory(Path::new(&romfs_path))?)
     } else {
@@ -122,13 +122,14 @@ fn create_nxo(format: &str, input_file: &str, output_file: &str, icon_file: Opti
     let mut option = OpenOptions::new();
     let output_option = option.write(true).create(true).truncate(true);
     match format {
-        "nro" => nxo.write_nro(&mut output_option.open(output_file)?, romfs_dir, icon_file.as_ref().map(|v| &**v), nacp_file),
-        "nso" => nxo.write_nso(&mut output_option.open(output_file)?),
+        "nro" => nxo.write_nro(&mut output_option.open(output_file)?, romfs_dir, icon_file.as_ref().map(|v| &**v), nacp_file)?,
+        "nso" => nxo.write_nso(&mut output_option.open(output_file)?)?,
         _ => process::exit(1),
     }
+    Ok(())
 }
 
-fn create_pfs0(input_directory: &str, output_file: &str) -> std::io::Result<()> {
+fn create_pfs0(input_directory: &str, output_file: &str) -> Result<(), linkle::error::Error> {
     let mut pfs0 = linkle::format::pfs0::Pfs0::from_directory(&input_directory)?;
     let mut option = OpenOptions::new();
     let output_option = option.write(true).create(true).truncate(true);
@@ -136,18 +137,27 @@ fn create_pfs0(input_directory: &str, output_file: &str) -> std::io::Result<()> 
     Ok(())
 }
 
-fn extract_pfs0(input_file: &str, output_directory: &str) -> std::io::Result<()> {
-    let mut pfs0 = linkle::format::pfs0::Pfs0::from_file(&input_file)?;
+fn extract_pfs0(input_file: &str, output_directory: &str) -> Result<(), linkle::error::Error> {
+    let input_file = File::open(input_file)?;
+    let mut pfs0 = linkle::format::pfs0::Pfs0::from_file(input_file)?;
     let mut option = OpenOptions::new();
     let output_option = option.write(true).create(true).truncate(true);
     let path = Path::new(output_directory);
+    match std::fs::create_dir(path) {
+        Ok(()) => (),
+        Err(ref err) if err.kind() == std::io::ErrorKind::AlreadyExists => (),
+        Err(err) => Err(err)?
+    }
     for file in pfs0.files() {
-        io::copy(file, output_option.open(path.join(file.name()))?)?;
+        let mut file = file?;
+        let name = path.join(file.file_name());
+        println!("Writing {}", file.file_name());
+        std::io::copy(&mut file, &mut output_option.open(name)?)?;
     }
     Ok(())
 }
 
-fn create_nacp(input_file: &str, output_file: &str) -> std::io::Result<()> {
+fn create_nacp(input_file: &str, output_file: &str) -> Result<(), linkle::error::Error> {
     let mut nacp = linkle::format::nacp::NacpFile::from_file(&input_file)?;
     let mut option = OpenOptions::new();
     let output_option = option.write(true).create(true).truncate(true);
@@ -155,7 +165,7 @@ fn create_nacp(input_file: &str, output_file: &str) -> std::io::Result<()> {
     Ok(())
 }
 
-fn create_romfs(input_directory: &Path, output_file: &Path) -> std::io::Result<()> {
+fn create_romfs(input_directory: &Path, output_file: &Path) -> Result<(), linkle::error::Error> {
     let romfs = linkle::format::romfs::RomFs::from_directory(&input_directory)?;
     let mut option = OpenOptions::new();
     let output_option = option.write(true).create(true).truncate(true);
@@ -169,7 +179,7 @@ fn to_opt_ref<U: ?Sized, T: AsRef<U>>(s: &Option<T>) -> Option<&U> {
 
 fn extract_nca(input_file: &Path, is_dev: bool, output_header_json: Option<&Path>,
                output_section0: Option<&Path>, output_section1: Option<&Path>,
-               output_section2: Option<&Path>, output_section3: Option<&Path>) -> std::io::Result<()> {
+               output_section2: Option<&Path>, output_section3: Option<&Path>) -> Result<(), linkle::error::Error> {
     let keys = if is_dev {
         linkle::pki::Keys::new_dev(None).unwrap()
     } else {

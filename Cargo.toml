@@ -40,6 +40,7 @@ static_assertions = "0.3"
 block-modes = "0.2"
 aes = "0.3"
 num-traits = "0.2"
+derive_more = "0.13"
 
 [features]
 binaries = ["structopt", "cargo_metadata", "scroll", "goblin"]

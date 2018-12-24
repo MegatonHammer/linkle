@@ -12,25 +12,26 @@ pub trait ReadSeek: Read + Seek {}
 
 impl<T: Read + Seek> ReadSeek for T {}
 
-enum Pfs0File {
+enum Pfs0Meta {
     HostPath(PathBuf),
     SubFile {
         file: Box<ReadSeek>,
         name: String,
+        size: u64
     }
 }
 
-impl Pfs0File {
+impl Pfs0Meta {
     fn file_name(&self) -> &str {
         match self {
-            Pfs0File::HostPath(path) => path.file_name().unwrap().to_str().unwrap(),
-            Pfs0File::SubFile { ref name, .. } => name,
+            Pfs0Meta::HostPath(path) => path.file_name().unwrap().to_str().unwrap(),
+            Pfs0Meta::SubFile { ref name, .. } => name,
         }
     }
 }
 
 pub struct Pfs0 {
-    files: Vec<Pfs0File>,
+    files: Vec<Pfs0Meta>,
 }
 
 impl Pfs0 {
@@ -43,14 +44,15 @@ impl Pfs0 {
             if entry_path.is_dir() {
                 println!("Ignoring directory \"{}\"", entry_path.display());
             } else {
-                files.push(Pfs0File::HostPath(entry_path.clone()));
+                files.push(Pfs0Meta::HostPath(entry_path.clone()));
             }
         }
         Ok(Pfs0 { files })
     }
 
-    pub fn from_file<R: BufRead + Seek + TryClone>(mut f: R) -> Result<Self, Error> {
+    pub fn from_file<R: Read + Seek + TryClone + 'static>(f: R) -> Result<Self, Error> {
         // Header
+        let mut f = std::io::BufReader::new(f);
         let mut magic = [0; 4];
         f.read_exact(&mut magic)?;
         if &magic != b"PFS0" {
@@ -60,27 +62,31 @@ impl Pfs0 {
         let filecount = f.read_u32::<LittleEndian>()?;
         let string_table_size = f.read_u32::<LittleEndian>()?;
         let _zero = f.read_u32::<LittleEndian>()?;
-
         let mut files = Vec::with_capacity(filecount as usize);
 
+        let string_table_offset = 0x10 + filecount as u64 * 0x18;
+        let data_offset = string_table_offset + string_table_size as u64;
+
         for file in 0..filecount {
-            let offset = f.read_u64::<LittleEndian>()?;
+            let offset = data_offset + f.read_u64::<LittleEndian>()?;
             let size = f.read_u64::<LittleEndian>()?;
-            let filename_offset = f.read_u32::<LittleEndian>()?;
-            let _zero = f.read_u64::<LittleEndian>()?;
+            let filename_offset = string_table_offset + f.read_u32::<LittleEndian>()? as u64;
+            let _zero = f.read_u32::<LittleEndian>()?;
             files.push((offset, size, filename_offset));
         }
 
         let mut finalfiles = Vec::with_capacity(filecount as usize);
         for (offset, size, filename_offset) in files {
             f.seek(SeekFrom::Start(filename_offset as u64))?;
-            let filename = Vec::new();
+            let mut filename = Vec::new();
             f.read_until(b'\0', &mut filename)?;
+            filename.pop();
             let filename = String::from_utf8(filename)?;
-            Pfs0File::SubFile {
-                file: ReadRange::new(f.try_clone()?, offset, size),
+            finalfiles.push(Pfs0Meta::SubFile {
+                file: Box::new(ReadRange::new(f.get_ref().try_clone()?, offset, size)),
                 name: filename,
-            }
+                size
+            });
         }
         Ok(Pfs0 {
             files: finalfiles
@@ -136,14 +142,14 @@ impl Pfs0 {
             let mut host_file;
 
             let (file, file_size, file_name) = match file {
-                Pfs0File::HostPath(path) => {
+                Pfs0Meta::HostPath(path) => {
                     // Open the file and retrieve the size of it
                     host_file = File::open(&path)?;
                     let file_size = host_file.metadata()?.len();
                     let name = path.file_name().unwrap().to_str().unwrap();
                     (&mut host_file as &mut dyn ReadSeek, file_size, name)
                 },
-                Pfs0File::SubFile { file, size, name, .. } => {
+                Pfs0Meta::SubFile { file, name, size, .. } => {
                     (file as &mut dyn ReadSeek, *size, &**name)
                 }
             };
@@ -171,36 +177,59 @@ impl Pfs0 {
         Ok(())
     }
 
-    pub fn files(&self) -> impl Iterator<Item = io::Result<Box<dyn ReadSeek>>> + '_ {
+    pub fn files(self) -> impl Iterator<Item = io::Result<Pfs0File>> + 'static {
         Pfs0FileIterator {
             pfs0: self,
-            curfile: 0
         }
     }
 }
 
-struct Pfs0FileIterator<'a> {
-    pfs0: &'a Pfs0,
-    curfile: usize
+pub struct Pfs0File {
+    name: String,
+    file: Box<dyn ReadSeek + 'static>
 }
 
-impl<'a> Iterator for Pfs0FileIterator<'a> {
-    type Item = io::Result<Box<dyn ReadSeek>>;
+impl Pfs0File {
+    pub fn file_name(&self) -> &str {
+        &self.name
+    }
+}
 
-    fn next(&mut self) -> Option<io::Result<Box<ReadSeek>>> {
-        if let Some(file) = self.pfs0.files.get(self.curfile) {
-            let file = match file {
-                Pfs0File::HostPath(path) => {
+impl Read for Pfs0File {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.file.read(buf)
+    }
+}
+
+impl Seek for Pfs0File {
+    fn seek(&mut self, from: SeekFrom) -> io::Result<u64> {
+        self.file.seek(from)
+    }
+}
+
+struct Pfs0FileIterator {
+    pfs0: Pfs0,
+}
+
+impl Iterator for Pfs0FileIterator {
+    type Item = io::Result<Pfs0File>;
+
+    fn next(&mut self) -> Option<io::Result<Pfs0File>> {
+        if let Some(meta) = self.pfs0.files.pop() {
+            let name = meta.file_name().into();
+            let file = match meta {
+                Pfs0Meta::HostPath(path) => {
                     File::open(path)
                         .map(|v| Box::new(v) as Box<dyn ReadSeek>)
                 },
-                Pfs0File::SubFile { file } => {
+                Pfs0Meta::SubFile { mut file, .. } => {
                     file.seek(SeekFrom::Start(0))
-                        .map(|()| Box::new(file))
+                        .map(|_| file)
                 }
             };
-            self.curfile += 1;
-            Some(file)
+            Some(file.map(|file| Pfs0File {
+                name, file
+            }))
         } else {
             None
         }
