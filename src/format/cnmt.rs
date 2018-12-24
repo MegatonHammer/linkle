@@ -11,10 +11,9 @@ pub struct Cnmt {
 	meta_entry_count: u16,
 	title_header: Option<TitleHeader> /* TODO: figure out a better way to do this with the different title types. */,
 	content_entries: Vec<ContentEntry>,
-	meta_entries: Option<Vec<MetaEntry>>
+	meta_entries: Vec<MetaEntry>
 }
 
-#[derive(Clone)]
 pub enum TitleType {
 	SystemProgram,
 	SystemData,
@@ -51,7 +50,6 @@ pub enum ContentType {
 	Unknown
 }
 
-#[derive(Clone)]
 pub struct MetaEntry {
 	title_id: u64,
 	title_version: u32,
@@ -111,20 +109,16 @@ impl Cnmt {
 			file.read_u8()?;
 		}
 
-		let mut meta_entries = None;
+		let mut meta_entries = Vec::new();
 
-		if meta_entry_count != 0 {
-			meta_entries = Some(Vec::new());
+		for _ in 0..meta_entry_count {
+			meta_entries.push(MetaEntry {
+				title_id: file.read_u64::<LittleEndian>()?,
+				title_version: file.read_u32::<LittleEndian>()?,
+				title_type: TitleType::from_u8(&file.read_u8()?)
+			});
 
-			for _ in 0..meta_entry_count {
-				meta_entries.clone().unwrap().push(MetaEntry {
-					title_id: file.read_u64::<LittleEndian>()?,
-					title_version: file.read_u32::<LittleEndian>()?,
-					title_type: TitleType::from_u8(&file.read_u8()?)
-				});
-
-				file.read_u24::<LittleEndian>()?;
-			}
+			file.read_u24::<LittleEndian>()?;
 		}
 
 		Ok(Cnmt {
