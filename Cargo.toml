@@ -36,6 +36,7 @@ failure = "0.1"
 dirs = "1.0"
 block-modes = "0.2"
 aes = "0.3"
+num-traits = "0.2"
 
 [features]
 binaries = ["structopt", "cargo_metadata", "scroll", "goblin"]
