@@ -1,7 +1,7 @@
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use crate::format::utils;
 use crate::error::Error;
-use crate::utils::{ReadRange, TryClone};
+use crate::utils::{ReadRange, TryClone, align_up};
 use failure::Backtrace;
 use std;
 use std::fs::File;
@@ -98,6 +98,7 @@ impl Pfs0 {
         T: Write + Seek,
     {
         let files = &mut self.files;
+        files.sort_by_key(|v| v.file_name().to_string());
         let file_count = files.len() as u32;
 
         // Header
@@ -114,7 +115,8 @@ impl Pfs0 {
         output_writter.write_u32::<LittleEndian>(0)?;
 
         let file_table_size = 0x18 * files.len() as u64;
-        let string_table_pos: u64 = 0x10 + file_table_size;
+        // The Nintendo tools align the string table to 0x20.
+        let string_table_pos: u64 = align_up(0x10 + file_table_size, 0x20);
         let data_pos: u64 = string_table_pos + (string_table_size as u64);
 
         // Create empty tabes
