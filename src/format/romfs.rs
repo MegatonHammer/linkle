@@ -5,6 +5,8 @@ use std::fs::{self, File};
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use byteorder::{WriteBytesExt, LE};
+use crate::error::Error;
+use failure::Backtrace;
 
 #[derive(Debug)]
 struct RomFsDirEntCtx {
@@ -233,7 +235,7 @@ impl RomFs {
         ctx
     }
 
-    pub fn from_directory(path: &Path) -> io::Result<RomFs> {
+    pub fn from_directory(path: &Path) -> Result<RomFs, Error> {
         // Stack of directories to visit. We'll iterate over it. When finding
         // new directories, we'll push them to this stack, so that iteration may
         // continue. This avoids doing recursive functions (which runs the risk
@@ -254,9 +256,9 @@ impl RomFs {
         while let Some(parent_dir) = dirs.pop() {
             let path = parent_dir.borrow().system_path.clone();
 
-            for entry in fs::read_dir(path)? {
-                let entry = entry?;
-                let file_type = entry.file_type()?;
+            for entry in fs::read_dir(&path).map_err(|err| (err, &path))? {
+                let entry = entry.map_err(|err| (err, &path))?;
+                let file_type = entry.file_type().map_err(|err| (err, entry.path()))?;
 
                 if file_type.is_dir() {
                     let new_dir = RomFsDirEntCtx::new(Rc::downgrade(&parent_dir), entry.path());
@@ -278,7 +280,7 @@ impl RomFs {
                         name: entry.path().file_name().expect("Path to terminate properly").to_str().expect("Path to contain non-unicode chars").into(),
                         entry_offset: 0,
                         offset: 0,
-                        size: entry.metadata()?.len(),
+                        size: entry.metadata().map_err(|err| (err, entry.path()))?.len(),
                         parent: Rc::downgrade(&parent_dir)
                     }));
 
@@ -289,9 +291,9 @@ impl RomFs {
                     ctx.file_table_size += mem::size_of::<RomFsFileEntryHdr>() as u64 + align64(file.borrow().name.len() as u64, 4);
 
                 } else if file_type.is_symlink() {
-                    Err(io::Error::new(io::ErrorKind::Other, format!("Can't handle symlinks in romfs: {}", entry.path().to_string_lossy())))?;
+                    Err(Error::RomFsSymlink(entry.path(), Backtrace::new()))?;
                 } else {
-                    Err(io::Error::new(io::ErrorKind::Other, format!("Unknown file type at {}", entry.path().to_string_lossy())))?;
+                    Err(Error::RomFsFiletype(entry.path(), Backtrace::new()))?;
                 }
             }
             parent_dir.borrow_mut().child.sort_by_key(|v| v.borrow().name.clone());
