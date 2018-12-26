@@ -1,4 +1,6 @@
 use std::io;
+use std::str::Utf8Error;
+use std::string::FromUtf8Error;
 use std::path::{Path, PathBuf};
 use ini;
 use failure::Backtrace;
@@ -18,6 +20,10 @@ pub enum Error {
     Ini(#[cause] ini::ini::Error, Backtrace),
     #[display(fmt = "Key derivation error: {}", _0)]
     Crypto(String, Backtrace),
+    #[display(fmt = "Invalid PFS0: {}.", _0)]
+    InvalidPfs0(&'static str, Backtrace),
+    #[display(fmt = "Failed to convert filename to UTF8: {}.", _0)]
+    Utf8Conversion(String, #[cause] Utf8Error, Backtrace),
     #[display(fmt = "Can't handles symlinks in romfs: {}", "_0.display()")]
     RomFsSymlink(PathBuf, Backtrace),
     #[display(fmt = "Unknown file type at {}", "_0.display()")]
@@ -65,5 +71,12 @@ impl From<ini::ini::Error> for Error {
 impl From<BlockModeError> for Error {
     fn from(err: BlockModeError) -> Error {
         Error::BlockMode(err, Backtrace::new())
+    }
+}
+
+impl From<FromUtf8Error> for Error {
+    fn from(err: FromUtf8Error) -> Error {
+        // Why the heck does OsStr not have display()?
+        Error::Utf8Conversion(String::from_utf8_lossy(err.as_bytes()).into_owned(), err.utf8_error(), Backtrace::new())
     }
 }
