@@ -22,6 +22,14 @@ pub enum Error {
     RomFsSymlink(PathBuf, Backtrace),
     #[display(fmt = "Unknown file type at {}", "_0.display()")]
     RomFsFiletype(PathBuf, Backtrace),
+    #[display(fmt = "Missing key: {}. Make sure your keyfile is complete.", _0)]
+    MissingKey(&'static str, Backtrace),
+    #[display(fmt = "Failed to parse NCA. Make sure your {} key is correct.", _0)]
+    NcaParse(&'static str, Backtrace),
+    #[display(fmt = "Missing section {}.", _0)]
+    MissingSection(usize, Backtrace),
+    #[display(fmt = "Invalid NCA: {}.", _0)]
+    InvalidNca(&'static str, Backtrace),
 }
 
 impl Error {
