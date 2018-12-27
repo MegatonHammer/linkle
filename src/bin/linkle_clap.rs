@@ -6,6 +6,7 @@ use std::fs::{OpenOptions};
 use std::path::{Path, PathBuf};
 use std::process;
 use structopt::StructOpt;
+use linkle::error::ResultExt;
 
 #[derive(StructOpt)]
 #[structopt(name = "linkle", about = "The legendary hero")]
@@ -67,49 +68,59 @@ enum Opt {
     },
 }
 
-fn create_nxo(format: &str, input_file: &str, output_file: &str, icon_file: Option<&str>, romfs_dir: Option<&str>, nacp_file: Option<&str>) -> std::io::Result<()> {
+fn create_nxo(format: &str, input_file: &str, output_file: &str, icon_file: Option<&str>, romfs_dir: Option<&str>, nacp_file: Option<&str>) -> Result<(), linkle::error::Error> {
     let romfs_dir = if let Some(romfs_path) = romfs_dir {
         Some(linkle::format::romfs::RomFs::from_directory(Path::new(&romfs_path))?)
     } else {
         None
     };
     let nacp_file = if let Some(nacp_path) = nacp_file {
-        Some(linkle::format::nacp::NacpFile::from_file(&nacp_path)?)
+        Some(linkle::format::nacp::NacpFile::from_file(&nacp_path).map_err(|err| (err, &nacp_path))?)
     } else {
         None
     };
 
-    let mut nxo = linkle::format::nxo::NxoFile::from_elf(&input_file)?;
+    let mut nxo = linkle::format::nxo::NxoFile::from_elf(&input_file).map_err(|err| (err, &input_file))?;
     let mut option = OpenOptions::new();
     let output_option = option.write(true).create(true).truncate(true);
     match format {
-        "nro" => nxo.write_nro(&mut output_option.open(output_file)?, romfs_dir, icon_file.as_ref().map(|v| &**v), nacp_file),
-        "nso" => nxo.write_nso(&mut output_option.open(output_file)?),
+        "nro" => {
+            let mut out_file = output_option.open(output_file).map_err(|err| (err, output_file))?;
+            nxo.write_nro(&mut out_file, romfs_dir, icon_file.as_ref().map(|v| &**v), nacp_file)
+                .map_err(|err| (err, output_file))?;
+        },
+        "nso" => {
+            let mut out_file = output_option.open(output_file).map_err(|err| (err, output_file))?;
+            nxo.write_nso(&mut out_file).map_err(|err| (err, output_file))?;
+        }
         _ => process::exit(1),
     }
+    Ok(())
 }
 
-fn create_pfs0(input_directory: &str, output_file: &str) -> std::io::Result<()> {
+fn create_pfs0(input_directory: &str, output_file: &str) -> Result<(), linkle::error::Error> {
     let mut pfs0 = linkle::format::pfs0::Pfs0File::from_directory(&input_directory)?;
     let mut option = OpenOptions::new();
     let output_option = option.write(true).create(true).truncate(true);
-    pfs0.write(&mut output_option.open(output_file)?)?;
+    pfs0.write(&mut output_option.open(output_file).map_err(|err| (err, output_file))?).map_err(|err| (err, output_file))?;
     Ok(())
 }
 
-fn create_nacp(input_file: &str, output_file: &str) -> std::io::Result<()> {
+fn create_nacp(input_file: &str, output_file: &str) -> Result<(), linkle::error::Error> {
     let mut nacp = linkle::format::nacp::NacpFile::from_file(&input_file)?;
     let mut option = OpenOptions::new();
     let output_option = option.write(true).create(true).truncate(true);
-    nacp.write(&mut output_option.open(output_file)?)?;
+    let mut out_file = output_option.open(output_file).map_err(|err| (err, output_file))?;
+    nacp.write(&mut out_file).map_err(|err| (err, output_file))?;
     Ok(())
 }
 
-fn create_romfs(input_directory: &Path, output_file: &Path) -> std::io::Result<()> {
+fn create_romfs(input_directory: &Path, output_file: &Path) -> Result<(), linkle::error::Error> {
     let romfs = linkle::format::romfs::RomFs::from_directory(&input_directory)?;
     let mut option = OpenOptions::new();
     let output_option = option.write(true).create(true).truncate(true);
-    romfs.write(&mut output_option.open(output_file)?)?;
+    let mut out_file = output_option.open(output_file).map_err(|err| (err, output_file))?;
+    romfs.write(&mut out_file).map_err(|err| (err, output_file))?;
     Ok(())
 }
 
@@ -127,7 +138,7 @@ fn process_args(app: &Opt) {
     };
 
     if let Err(e) = res {
-        println!("Error: {:?}", e);
+        println!("Error: {}", e);
         process::exit(1)
     }
 }

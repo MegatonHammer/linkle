@@ -23,6 +23,34 @@ use clap::{Arg, App};
 use url::Url;
 use goblin::elf::{Elf, Header as ElfHeader, ProgramHeader};
 use goblin::elf::section_header::{SHT_NOBITS, SHT_SYMTAB, SHT_STRTAB};
+use failure::Fail;
+use derive_more::Display;
+
+#[derive(Debug, Fail, Display)]
+enum Error {
+    #[display(fmt = "{}", _0)]
+    Goblin(#[cause] goblin::error::Error),
+    #[display(fmt = "{}", _0)]
+    Linkle(#[cause] linkle::error::Error)
+}
+
+impl From<goblin::error::Error> for Error {
+    fn from(from: goblin::error::Error) -> Error {
+        Error::Goblin(from)
+    }
+}
+
+impl From<linkle::error::Error> for Error {
+    fn from(from: linkle::error::Error) -> Error {
+        Error::Linkle(from)
+    }
+}
+
+impl From<std::io::Error> for Error {
+    fn from(from: std::io::Error) -> Error {
+        linkle::error::Error::from(from).into()
+    }
+}
 
 fn find_project_root(path: &Path) -> Option<&Path> {
     for parent in path.ancestors() {
@@ -32,7 +60,6 @@ fn find_project_root(path: &Path) -> Option<&Path> {
     }
     None
 }
-
 
 // TODO: Run cargo build --help to get the list of options!
 const CARGO_OPTIONS: &str = "CARGO OPTIONS:
@@ -93,7 +120,7 @@ trait BetterIOWrite<Ctx: Copy>: IOwrite<Ctx> {
 
 impl<Ctx: Copy, W: IOwrite<Ctx> + ?Sized> BetterIOWrite<Ctx> for W {}
 
-fn generate_debuginfo_romfs<P: AsRef<Path>>(elf_path: &Path, romfs: Option<P>) -> goblin::error::Result<RomFs> {
+fn generate_debuginfo_romfs<P: AsRef<Path>>(elf_path: &Path, romfs: Option<P>) -> Result<RomFs, Error> {
     let mut elf_file = File::open(elf_path)?;
     let mut buffer = Vec::new();
     elf_file.read_to_end(&mut buffer)?;
