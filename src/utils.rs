@@ -7,6 +7,11 @@ pub fn align_down<T: Num + Not<Output = T> + BitAnd<Output = T> + Copy>(addr: T,
     addr & !(align - T::one())
 }
 
+pub fn align_up<T: Num + Not<Output = T> + BitAnd<Output = T> + Copy>(addr: T, align: T) -> T
+{
+    align_down(addr + (align - T::one()), align)
+}
+
 // Why is this not a trait...
 pub trait TryClone: Sized {
     fn try_clone(&self) -> std::io::Result<Self>;

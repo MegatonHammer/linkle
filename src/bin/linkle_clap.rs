@@ -2,7 +2,7 @@ extern crate structopt;
 
 extern crate linkle;
 
-use std::fs::{OpenOptions};
+use std::fs::{OpenOptions, File};
 use std::path::{Path, PathBuf};
 use std::process;
 use structopt::StructOpt;
@@ -47,6 +47,14 @@ enum Opt {
         input_directory: String,
         /// Sets the output file to use.
         output_file: String,
+    },
+    /// Extract a PFS0 or NSP file.
+    #[structopt(name = "pfs0_extract"/*, raw(alias = "nsp")*/)]
+    Pfs0Extract {
+        /// Sets the input PFS0 to use.
+        input_file: String,
+        /// Sets the output directory to extract the PFS0 into.
+        output_directory: String,
     },
     /// Create a NACP file from a JSON file.
     #[structopt(name = "nacp")]
@@ -99,10 +107,31 @@ fn create_nxo(format: &str, input_file: &str, output_file: &str, icon_file: Opti
 }
 
 fn create_pfs0(input_directory: &str, output_file: &str) -> Result<(), linkle::error::Error> {
-    let mut pfs0 = linkle::format::pfs0::Pfs0File::from_directory(&input_directory)?;
+    let mut pfs0 = linkle::format::pfs0::Pfs0::from_directory(&input_directory)?;
     let mut option = OpenOptions::new();
     let output_option = option.write(true).create(true).truncate(true);
-    pfs0.write(&mut output_option.open(output_file).map_err(|err| (err, output_file))?).map_err(|err| (err, output_file))?;
+    pfs0.write_pfs0(&mut output_option.open(output_file).map_err(|err| (err, output_file))?).map_err(|err| (err, output_file))?;
+    Ok(())
+}
+
+fn extract_pfs0(input_path: &str, output_directory: &str) -> Result<(), linkle::error::Error> {
+    let input_file = File::open(input_path).map_err(|err| (err, input_path))?;
+    let pfs0 = linkle::format::pfs0::Pfs0::from_reader(input_file).with_path(input_path)?;
+    let mut option = OpenOptions::new();
+    let output_option = option.write(true).create(true).truncate(true);
+    let path = Path::new(output_directory);
+    match std::fs::create_dir(path) {
+        Ok(()) => (),
+        Err(ref err) if err.kind() == std::io::ErrorKind::AlreadyExists => (),
+        Err(err) => Err((err, path))?
+    }
+    for file in pfs0.files() {
+        let mut file = file?;
+        let name = path.join(file.file_name());
+        println!("Writing {}", file.file_name());
+        let mut out_file = output_option.open(&name).map_err(|err| (err, &name))?;
+        std::io::copy(&mut file, &mut out_file).map_err(|err| (err, &name))?;
+    }
     Ok(())
 }
 
@@ -124,15 +153,16 @@ fn create_romfs(input_directory: &Path, output_file: &Path) -> Result<(), linkle
     Ok(())
 }
 
-fn to_opt_str(s: &Option<String>) -> Option<&str> {
-    s.as_ref().map(String::as_ref)
+fn to_opt_ref<U: ?Sized, T: AsRef<U>>(s: &Option<T>) -> Option<&U> {
+    s.as_ref().map(AsRef::as_ref)
 }
 
 fn process_args(app: &Opt) {
     let res = match app {
-        Opt::Nro { ref input_file, ref output_file, ref icon, ref romfs, ref nacp } => create_nxo("nro", input_file, output_file, to_opt_str(icon), to_opt_str(romfs), to_opt_str(nacp)),
+        Opt::Nro { ref input_file, ref output_file, ref icon, ref romfs, ref nacp } => create_nxo("nro", input_file, output_file, to_opt_ref(icon), to_opt_ref(romfs), to_opt_ref(nacp)),
         Opt::Nso { ref input_file, ref output_file } => create_nxo("nro", input_file, output_file, None, None, None),
         Opt::Pfs0 { ref input_directory, ref output_file } => create_pfs0(input_directory, output_file),
+        Opt::Pfs0Extract { ref input_file, ref output_directory } => extract_pfs0(input_file, output_directory),
         Opt::Nacp { ref input_file, ref output_file } => create_nacp(input_file, output_file),
         Opt::Romfs { ref input_directory, ref output_file } => create_romfs(input_directory, output_file),
     };
