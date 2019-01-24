@@ -6,11 +6,13 @@ use std::io::{self, ErrorKind};
 use std::path::Path;
 use crate::error::Error;
 use aes::Aes128;
+use cmac::Cmac;
 use block_modes::{Ctr128, Xts128, BlockModeIv, BlockMode};
 use block_modes::block_padding::ZeroPadding;
 use aes::block_cipher_trait::generic_array::GenericArray;
 use aes::block_cipher_trait::BlockCipher;
 use getset::Getters;
+use cmac::crypto_mac::Mac;
 
 #[derive(Clone, Copy)]
 pub struct Aes128Key([u8; 0x10]);
@@ -26,10 +28,29 @@ impl_debug_deserialize_serialize_hexstring!(EncryptedKeyblob);
 impl_debug_deserialize_serialize_hexstring!(Keyblob);
 impl_debug_deserialize_serialize_hexstring!(Modulus);
 
+impl Keyblob {
+    fn encrypt(&self, key: &Aes128Key, mac_key: &Aes128Key, keyblob_id: usize) -> Result<EncryptedKeyblob, Error> {
+        let mut encrypted_keyblob = [0; 0xB0];
+        encrypted_keyblob[0x20..].copy_from_slice(&self.0);
+
+        let mut crypter = Ctr128::<Aes128, ZeroPadding>::new_fixkey(GenericArray::from_slice(&key.0), GenericArray::from_slice(&encrypted_keyblob[0x10..0x20]));
+        crypter.encrypt_nopad(&mut encrypted_keyblob[0x20..])?;
+
+        let mut cmac = Cmac::<Aes128>::new_varkey(&mac_key.0[..]).unwrap();
+        cmac.input(&encrypted_keyblob[0x10..]);
+        encrypted_keyblob[..0x10].copy_from_slice(cmac.result().code().as_slice());
+        Ok(EncryptedKeyblob(encrypted_keyblob))
+    }
+}
+
 impl EncryptedKeyblob {
-    fn decrypt(&self, key: &Aes128Key) -> Result<Keyblob, Error> {
+    fn decrypt(&self, key: &Aes128Key, mac_key: &Aes128Key, keyblob_id: usize) -> Result<Keyblob, Error> {
         let mut keyblob = [0; 0x90];
         keyblob.copy_from_slice(&self.0[0x20..]);
+
+        let mut cmac = Cmac::<Aes128>::new_varkey(&mac_key.0[..]).unwrap();
+        cmac.input(&self.0[0x10..]);
+        cmac.verify(&self.0[..0x10]).map_err(|err| (keyblob_id, err))?;
 
         let mut crypter = Ctr128::<Aes128, ZeroPadding>::new_fixkey(GenericArray::from_slice(&key.0), GenericArray::from_slice(&self.0[0x10..0x20]));
         crypter.decrypt_nopad(&mut keyblob)?;
@@ -473,10 +494,12 @@ impl Keys {
             }
         }
         for i in 0..6 {
-            match (&self.keyblob_keys[i], &self.keyblob_mac_keys[i], &self.encrypted_keyblobs[i]) {
-                (Some(keyblob_key), Some(_keyblob_mac_key), Some(encrypted_keyblob)) => {
-                    // TODO: Calculate cmac
-                    self.keyblobs[i] = Some(encrypted_keyblob.decrypt(keyblob_key)?);
+            match (&self.keyblob_keys[i], &self.keyblob_mac_keys[i], &mut self.encrypted_keyblobs[i], &mut self.keyblobs[i]) {
+                (Some(keyblob_key), Some(keyblob_mac_key), Some(encrypted_keyblob), ref mut keyblob @ None) => {
+                    **keyblob = Some(encrypted_keyblob.decrypt(keyblob_key, keyblob_mac_key, i)?);
+                },
+                (Some(keyblob_key), Some(keyblob_mac_key), ref mut encrypted_keyblob @ None, Some(keyblob)) => {
+                    **encrypted_keyblob = Some(keyblob.encrypt(keyblob_key, keyblob_mac_key, i)?);
                 },
                 _ => continue
             }

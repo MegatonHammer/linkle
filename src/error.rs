@@ -30,6 +30,8 @@ pub enum Error {
     MissingSection(usize, Backtrace),
     #[display(fmt = "Invalid NCA: {}.", _0)]
     InvalidNca(&'static str, Backtrace),
+    #[display(fmt = "Invalid keyblob {}: {}.", _1, _0)]
+    MacError(cmac::crypto_mac::MacError, usize, Backtrace),
 }
 
 impl Error {
@@ -73,5 +75,11 @@ impl From<ini::ini::Error> for Error {
 impl From<BlockModeError> for Error {
     fn from(err: BlockModeError) -> Error {
         Error::BlockMode(err, Backtrace::new())
+    }
+}
+
+impl From<(usize, cmac::crypto_mac::MacError)> for Error {
+    fn from((id, err): (usize, cmac::crypto_mac::MacError)) -> Error {
+        Error::MacError(err, id, Backtrace::new())
     }
 }

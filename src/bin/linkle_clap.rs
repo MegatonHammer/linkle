@@ -95,7 +95,11 @@ enum Opt {
 
         /// Use development keys instead of retail
         #[structopt(short = "d", long = "dev")]
-        dev: bool
+        dev: bool,
+
+        /// Keyfile
+        #[structopt(parse(from_os_str), short = "k", long = "keyset")]
+        keyfile: Option<PathBuf>,
     }
 }
 
@@ -159,15 +163,17 @@ fn to_opt_ref<U: ?Sized, T: AsRef<U>>(s: &Option<T>) -> Option<&U> {
     s.as_ref().map(AsRef::as_ref)
 }
 
-fn extract_nca(input_file: &Path, is_dev: bool, output_header_json: Option<&Path>,
+fn extract_nca(input_file: &Path, is_dev: bool, key_path: Option<&Path>,
+               output_header_json: Option<&Path>,
                output_section0: Option<&Path>, output_section1: Option<&Path>,
-               output_section2: Option<&Path>, output_section3: Option<&Path>) -> std::io::Result<()> {
+               output_section2: Option<&Path>, output_section3: Option<&Path>) -> Result<(), linkle::error::Error> {
     let keys = if is_dev {
-        linkle::pki::Keys::new_dev(None).unwrap()
+        linkle::pki::Keys::new_dev(key_path).unwrap()
     } else {
-        linkle::pki::Keys::new_retail(None).unwrap()
+        linkle::pki::Keys::new_retail(key_path).unwrap()
     };
-    let nca = linkle::format::nca::Nca::from_file(&keys, File::open(input_file)?).unwrap();
+    println!("{:#?}", keys);
+    /*let nca = linkle::format::nca::Nca::from_file(&keys, File::open(input_file)?).unwrap();
     if let Some(output_header_json) = output_header_json {
         let mut output_header_json = File::create(output_header_json)?;
         nca.write_json(&mut output_header_json).unwrap();
@@ -191,7 +197,7 @@ fn extract_nca(input_file: &Path, is_dev: bool, output_header_json: Option<&Path
         let mut output_section3 = File::create(output_section3)?;
         let mut section = nca.section(3).unwrap();
         std::io::copy(&mut section, &mut output_section3)?;
-    }
+    }*/
     Ok(())
 }
 
@@ -204,7 +210,7 @@ fn process_args(app: &Opt) {
         Opt::Romfs { ref input_directory, ref output_file } => create_romfs(input_directory, output_file),
         Opt::NcaExtract { ref input_file, ref header_file, ref section0_file,
                           ref section1_file, ref section2_file,
-                          ref section3_file, dev } => extract_nca(input_file, *dev, to_opt_ref(header_file), to_opt_ref(section0_file), to_opt_ref(section1_file), to_opt_ref(section2_file), to_opt_ref(section3_file)),
+                          ref section3_file, dev, ref keyfile } => extract_nca(input_file, *dev, to_opt_ref(keyfile), to_opt_ref(header_file), to_opt_ref(section0_file), to_opt_ref(section1_file), to_opt_ref(section2_file), to_opt_ref(section3_file)),
     };
 
     if let Err(e) = res {
