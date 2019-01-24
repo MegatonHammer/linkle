@@ -20,6 +20,8 @@ pub enum Error {
     Ini(#[cause] ini::ini::Error, Backtrace),
     #[display(fmt = "Key derivation error: {}", _0)]
     Crypto(String, Backtrace),
+    #[display(fmt = "Invalid keyblob {}: {}.", _1, _0)]
+    MacError(cmac::crypto_mac::MacError, usize, Backtrace),
     #[display(fmt = "Invalid PFS0: {}.", _0)]
     InvalidPfs0(&'static str, Backtrace),
     #[display(fmt = "Failed to convert filename to UTF8: {}.", _0)]
@@ -78,5 +80,11 @@ impl From<FromUtf8Error> for Error {
     fn from(err: FromUtf8Error) -> Error {
         // Why the heck does OsStr not have display()?
         Error::Utf8Conversion(String::from_utf8_lossy(err.as_bytes()).into_owned(), err.utf8_error(), Backtrace::new())
+    }
+}
+
+impl From<(usize, cmac::crypto_mac::MacError)> for Error {
+    fn from((id, err): (usize, cmac::crypto_mac::MacError)) -> Error {
+        Error::MacError(err, id, Backtrace::new())
     }
 }
