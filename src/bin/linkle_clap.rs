@@ -74,6 +74,17 @@ enum Opt {
         #[structopt(parse(from_os_str))]
         output_file: PathBuf,
     },
+    /// Print all the keys generated from our keyfile.
+    #[structopt(name = "keygen")]
+    Keygen {
+        /// Use development keys instead of retail
+        #[structopt(short = "d", long = "dev")]
+        dev: bool,
+
+        /// Key file to use
+        #[structopt(parse(from_os_str), short = "k", long = "keyset")]
+        keyfile: Option<PathBuf>,
+    }
 }
 
 fn create_nxo(format: &str, input_file: &str, output_file: &str, icon_file: Option<&str>, romfs_dir: Option<&str>, nacp_file: Option<&str>) -> Result<(), linkle::error::Error> {
@@ -153,6 +164,13 @@ fn create_romfs(input_directory: &Path, output_file: &Path) -> Result<(), linkle
     Ok(())
 }
 
+fn print_keys(is_dev: bool, key_path: Option<&Path>) -> Result<(), linkle::error::Error> {
+    let keys = linkle::pki::Keys::new_retail(key_path).unwrap();
+
+    keys.write(&mut std::io::stdout()).unwrap();
+    Ok(())
+}
+
 fn to_opt_ref<U: ?Sized, T: AsRef<U>>(s: &Option<T>) -> Option<&U> {
     s.as_ref().map(AsRef::as_ref)
 }
@@ -165,6 +183,7 @@ fn process_args(app: &Opt) {
         Opt::Pfs0Extract { ref input_file, ref output_directory } => extract_pfs0(input_file, output_directory),
         Opt::Nacp { ref input_file, ref output_file } => create_nacp(input_file, output_file),
         Opt::Romfs { ref input_directory, ref output_file } => create_romfs(input_directory, output_file),
+        Opt::Keygen { dev, ref keyfile } => print_keys(*dev, to_opt_ref(keyfile)),
     };
 
     if let Err(e) = res {

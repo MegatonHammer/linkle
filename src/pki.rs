@@ -2,10 +2,12 @@ use std::fmt;
 use ini::{self, ini::Properties};
 use failure::Backtrace;
 use std::fs::File;
-use std::io::{self, ErrorKind};
+use std::io::{self, Write, ErrorKind};
 use std::path::Path;
 use crate::error::Error;
 use aes::Aes128;
+use cmac::Cmac;
+use cmac::crypto_mac::Mac;
 use block_modes::{Ctr128, BlockModeIv, BlockMode};
 use block_modes::block_padding::ZeroPadding;
 use aes::block_cipher_trait::generic_array::GenericArray;
@@ -27,6 +29,14 @@ macro_rules! impl_debug {
                 Ok(())
             }
         }
+        impl fmt::Display for $for {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                for byte in &self.0[..] {
+                    write!(f, "{:02X}", byte)?;
+                }
+                Ok(())
+            }
+        }
     }
 }
 
@@ -36,10 +46,29 @@ impl_debug!(EncryptedKeyblob);
 impl_debug!(Keyblob);
 impl_debug!(Modulus);
 
+impl Keyblob {
+    fn encrypt(&self, key: &Aes128Key, mac_key: &Aes128Key, keyblob_id: usize) -> Result<EncryptedKeyblob, Error> {
+        let mut encrypted_keyblob = [0; 0xB0];
+        encrypted_keyblob[0x20..].copy_from_slice(&self.0);
+
+        let mut crypter = Ctr128::<Aes128, ZeroPadding>::new_fixkey(GenericArray::from_slice(&key.0), GenericArray::from_slice(&encrypted_keyblob[0x10..0x20]));
+        crypter.encrypt_nopad(&mut encrypted_keyblob[0x20..])?;
+
+        let mut cmac = Cmac::<Aes128>::new_varkey(&mac_key.0[..]).unwrap();
+        cmac.input(&encrypted_keyblob[0x10..]);
+        encrypted_keyblob[..0x10].copy_from_slice(cmac.result().code().as_slice());
+        Ok(EncryptedKeyblob(encrypted_keyblob))
+    }
+}
+
 impl EncryptedKeyblob {
-    fn decrypt(&self, key: &Aes128Key) -> Result<Keyblob, Error> {
+    fn decrypt(&self, key: &Aes128Key, mac_key: &Aes128Key, keyblob_id: usize) -> Result<Keyblob, Error> {
         let mut keyblob = [0; 0x90];
         keyblob.copy_from_slice(&self.0[0x20..]);
+
+        let mut cmac = Cmac::<Aes128>::new_varkey(&mac_key.0[..]).unwrap();
+        cmac.input(&self.0[0x10..]);
+        cmac.verify(&self.0[..0x10]).map_err(|err| (keyblob_id, err))?;
 
         let mut crypter = Ctr128::<Aes128, ZeroPadding>::new_fixkey(GenericArray::from_slice(&key.0), GenericArray::from_slice(&self.0[0x10..0x20]));
         crypter.decrypt_nopad(&mut keyblob)?;
@@ -150,6 +179,71 @@ pub struct Keys {
     package2_fixed_key_modulus: Option<Modulus>,
 }
 
+macro_rules! make_key_macros_write {
+    ($self:ident, $w:ident) => {
+        macro_rules! single_key {
+            ($keyname:tt) => {
+                if let Some(key) = &$self.$keyname {
+                    writeln!($w, "{} = {}", stringify!($keyname), key)?;
+                }
+            }
+        }
+
+        macro_rules! single_key_xts {
+            ($keyname:tt) => {
+                if let Some(key) = &$self.$keyname {
+                    writeln!($w, "{} = {}", stringify!($keyname), key)?;
+                }
+            }
+        }
+
+        macro_rules! multi_key {
+            ($keyname:tt) => {
+                for (idx, v) in $self.$keyname.iter().enumerate() {
+                    if let Some(key) = v {
+                        // remove trailing s
+                        let mut name = String::from(stringify!($keyname));
+                        if name.bytes().last() == Some(b's') {
+                            name.pop();
+                        }
+                        writeln!($w, "{}_{:02x} = {}", name, idx, key)?;
+                    }
+                }
+            }
+        }
+
+        macro_rules! multi_keyblob {
+            ($keyname:tt) => {
+                for (idx, v) in $self.$keyname.iter().enumerate() {
+                    if let Some(key) = v {
+                        // remove trailing s
+                        let mut name = String::from(stringify!($keyname));
+                        if name.bytes().last() == Some(b's') {
+                            name.pop();
+                        }
+                        writeln!($w, "{}_{:02x} = {}", name, idx, key)?;
+                    }
+                }
+            }
+        }
+
+        macro_rules! multi_encrypted_keyblob {
+            ($keyname:tt) => {
+                for (idx, v) in $self.$keyname.iter().enumerate() {
+                    if let Some(key) = v {
+                        // remove trailing s
+                        let mut name = String::from(stringify!($keyname));
+                        if name.bytes().last() == Some(b's') {
+                            name.pop();
+                        }
+                        writeln!($w, "{}_{:02x} = {}", name, idx, key)?;
+                    }
+                }
+            }
+        }
+    }
+}
+
 macro_rules! make_key_macros {
     ($self:ident, $section:ident) => {
         macro_rules! single_key {
@@ -172,7 +266,9 @@ macro_rules! make_key_macros {
                     let mut key = [0; 0x10];
                     // remove trailing s
                     let mut name = String::from(stringify!($keyname));
-                    name.pop();
+                    if name.bytes().last() == Some(b's') {
+                        name.pop();
+                    }
                     v.or_in(key_to_aes_array($section, &name, idx, &mut key)?.map(|()| Aes128Key(key)));
                 }
             }
@@ -198,7 +294,9 @@ macro_rules! make_key_macros {
                     let mut key = [0; 0xB0];
                     // remove trailing s
                     let mut name = String::from(stringify!($keyname));
-                    name.pop();
+                    if name.bytes().last() == Some(b's') {
+                        name.pop();
+                    }
                     v.or_in(key_to_aes_array($section, &name, idx, &mut key)?.map(|()| EncryptedKeyblob(key)));
                 }
             }
@@ -359,6 +457,47 @@ impl Keys {
         Ok(())
     }
 
+    pub fn write<W: Write>(&self, w: &mut W) -> io::Result<()> {
+        make_key_macros_write!(self, w);
+        single_key!(secure_boot_key);
+        single_key!(tsec_key);
+        multi_key!(keyblob_keys);
+        multi_key!(keyblob_mac_keys);
+        multi_key!(keyblob_key_sources);
+        multi_encrypted_keyblob!(encrypted_keyblobs);
+        multi_keyblob!(keyblobs);
+        single_key!(keyblob_mac_key_source);
+        single_key!(tsec_root_key);
+        multi_key!(master_kek_sources);
+        multi_key!(master_keks);
+        single_key!(master_key_source);
+        multi_key!(master_keys);
+        multi_key!(package1_keys);
+        multi_key!(package2_keys);
+        single_key!(package2_key_source);
+        single_key!(aes_kek_generation_source);
+        single_key!(aes_key_generation_source);
+        single_key!(key_area_key_application_source);
+        single_key!(key_area_key_ocean_source);
+        single_key!(key_area_key_system_source);
+        single_key!(titlekek_source);
+        single_key!(header_kek_source);
+        single_key!(sd_card_kek_source);
+        single_key_xts!(sd_card_save_key_source);
+        single_key_xts!(sd_card_nca_key_source);
+        single_key!(save_mac_kek_source);
+        single_key!(save_mac_key_source);
+        single_key_xts!(header_key_source);
+        single_key_xts!(header_key);
+        multi_key!(titlekeks);
+        multi_key!(key_area_key_application);
+        multi_key!(key_area_key_ocean);
+        multi_key!(key_area_key_system);
+        single_key_xts!(sd_card_save_key);
+        single_key_xts!(sd_card_nca_key);
+        Ok(())
+    }
+
     pub fn derive_keys(&mut self) -> Result<(), Error> {
         for i in 0..6 {
             /* Derive the keyblob_keys */
@@ -380,10 +519,12 @@ impl Keys {
             }
         }
         for i in 0..6 {
-            match (&self.keyblob_keys[i], &self.keyblob_mac_keys[i], &self.encrypted_keyblobs[i]) {
-                (Some(keyblob_key), Some(_keyblob_mac_key), Some(encrypted_keyblob)) => {
-                    // TODO: Calculate cmac
-                    self.keyblobs[i] = Some(encrypted_keyblob.decrypt(keyblob_key)?);
+            match (&self.keyblob_keys[i], &self.keyblob_mac_keys[i], &mut self.encrypted_keyblobs[i], &mut self.keyblobs[i]) {
+                (Some(keyblob_key), Some(keyblob_mac_key), Some(encrypted_keyblob), ref mut keyblob @ None) => {
+                    **keyblob = Some(encrypted_keyblob.decrypt(keyblob_key, keyblob_mac_key, i)?);
+                },
+                (Some(keyblob_key), Some(keyblob_mac_key), ref mut encrypted_keyblob @ None, Some(keyblob)) => {
+                    **encrypted_keyblob = Some(keyblob.encrypt(keyblob_key, keyblob_mac_key, i)?);
                 },
                 _ => continue
             }
