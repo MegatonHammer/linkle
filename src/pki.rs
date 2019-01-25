@@ -73,6 +73,18 @@ impl Aes128Key {
         Ok(())
     }
 
+    pub fn encrypt_ctr(&self, buf: &mut [u8], ctr: &[u8; 0x10]) -> Result<(), Error> {
+        if buf.len() % 16 != 0 {
+            return Err(Error::Crypto(String::from("buf length should be a multiple of 16, the size of an AES block."), Backtrace::new()));
+        }
+
+        let key = GenericArray::from_slice(&self.0);
+        let iv = GenericArray::from_slice(ctr);
+        let mut crypter = Ctr128::<Aes128, ZeroPadding>::new_fixkey(key, iv);
+        crypter.encrypt_nopad(buf)?;
+        Ok(())
+    }
+
     pub fn derive_key(&self, source: &[u8; 0x10]) -> Result<Aes128Key, Error> {
         let mut newkey = *source;
 
@@ -80,6 +92,15 @@ impl Aes128Key {
         crypter.decrypt_block(GenericArray::from_mut_slice(&mut newkey));
 
         Ok(Aes128Key(newkey))
+    }
+
+    pub fn encrypt_key(&self, key: &Aes128Key) -> [u8; 0x10] {
+        let mut newkey = key.0;
+
+        let crypter = Aes128::new(GenericArray::from_slice(&self.0));
+        crypter.encrypt_block(GenericArray::from_mut_slice(&mut newkey));
+
+        newkey
     }
 
     pub fn derive_xts_key(&self, source: &[u8; 0x20]) -> Result<AesXtsKey, Error> {
@@ -90,6 +111,16 @@ impl Aes128Key {
         crypter.decrypt_block(GenericArray::from_mut_slice(&mut newkey[0x10..0x20]));
 
         Ok(AesXtsKey(newkey))
+    }
+
+    pub fn encrypt_xts_key(&self, source: &AesXtsKey) -> [u8; 0x20] {
+        let mut newkey = source.0;
+
+        let crypter = Aes128::new(GenericArray::from_slice(&self.0));
+        crypter.encrypt_block(GenericArray::from_mut_slice(&mut newkey[0x00..0x10]));
+        crypter.encrypt_block(GenericArray::from_mut_slice(&mut newkey[0x10..0x20]));
+
+        newkey
     }
 }
 

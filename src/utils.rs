@@ -152,6 +152,22 @@ impl<R: io::Read> io::Read for ReadRange<R> {
     }
 }
 
+impl<R: io::Write> io::Write for ReadRange<R> {
+    fn write(&mut self, mut buf: &[u8]) -> io::Result<usize> {
+        if self.size < self.inner_pos + buf.len() as u64 {
+            // Avoid writing out of the section's bound.
+            buf = &buf[..(self.size.saturating_sub(self.inner_pos)) as usize];
+        }
+        let write = self.inner.write(buf)?;
+        self.inner_pos += write as u64;
+        Ok(write)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}
+
 impl<R: io::Seek> io::Seek for ReadRange<R> {
     fn seek(&mut self, from: io::SeekFrom) -> io::Result<u64> {
         let new_inner_pos = match from {

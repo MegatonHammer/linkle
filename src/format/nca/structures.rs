@@ -10,9 +10,9 @@ use plain::Plain;
 
 #[repr(transparent)]
 #[derive(Clone, Copy)]
-pub struct SigDebug([u8; 0x100]);
+pub struct SigDebug(pub [u8; 0x100]);
 #[derive(Clone, Copy)]
-pub struct SkipDebug<T>(T);
+pub struct SkipDebug<T>(pub T);
 
 impl<T> fmt::Debug for SkipDebug<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -34,7 +34,7 @@ pub struct RawNca {
     pub crypto_type: u8,
     pub key_index: u8,
     pub nca_size: u64,
-    pub titleid: u64,
+    pub title_id: u64,
     pub _padding0: SkipDebug<u32>,
     pub sdk_version: u32,
     pub crypto_type2: u8,
