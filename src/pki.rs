@@ -2,7 +2,7 @@ use std::fmt;
 use ini::{self, ini::Properties};
 use failure::Backtrace;
 use std::fs::File;
-use std::io::{self, ErrorKind};
+use std::io::{self, Write, ErrorKind};
 use std::path::Path;
 use crate::error::Error;
 use aes::Aes128;
@@ -22,6 +22,14 @@ struct Modulus([u8; 0x100]);
 macro_rules! impl_debug {
     ($for:ident) => {
         impl fmt::Debug for $for {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                for byte in &self.0[..] {
+                    write!(f, "{:02X}", byte)?;
+                }
+                Ok(())
+            }
+        }
+        impl fmt::Display for $for {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 for byte in &self.0[..] {
                     write!(f, "{:02X}", byte)?;
@@ -171,6 +179,71 @@ pub struct Keys {
     package2_fixed_key_modulus: Option<Modulus>,
 }
 
+macro_rules! make_key_macros_write {
+    ($self:ident, $w:ident) => {
+        macro_rules! single_key {
+            ($keyname:tt) => {
+                if let Some(key) = &$self.$keyname {
+                    writeln!($w, "{} = {}", stringify!($keyname), key)?;
+                }
+            }
+        }
+
+        macro_rules! single_key_xts {
+            ($keyname:tt) => {
+                if let Some(key) = &$self.$keyname {
+                    writeln!($w, "{} = {}", stringify!($keyname), key)?;
+                }
+            }
+        }
+
+        macro_rules! multi_key {
+            ($keyname:tt) => {
+                for (idx, v) in $self.$keyname.iter().enumerate() {
+                    if let Some(key) = v {
+                        // remove trailing s
+                        let mut name = String::from(stringify!($keyname));
+                        if name.bytes().last() == Some(b's') {
+                            name.pop();
+                        }
+                        writeln!($w, "{}_{:02x} = {}", name, idx, key)?;
+                    }
+                }
+            }
+        }
+
+        macro_rules! multi_keyblob {
+            ($keyname:tt) => {
+                for (idx, v) in $self.$keyname.iter().enumerate() {
+                    if let Some(key) = v {
+                        // remove trailing s
+                        let mut name = String::from(stringify!($keyname));
+                        if name.bytes().last() == Some(b's') {
+                            name.pop();
+                        }
+                        writeln!($w, "{}_{:02x} = {}", name, idx, key)?;
+                    }
+                }
+            }
+        }
+
+        macro_rules! multi_encrypted_keyblob {
+            ($keyname:tt) => {
+                for (idx, v) in $self.$keyname.iter().enumerate() {
+                    if let Some(key) = v {
+                        // remove trailing s
+                        let mut name = String::from(stringify!($keyname));
+                        if name.bytes().last() == Some(b's') {
+                            name.pop();
+                        }
+                        writeln!($w, "{}_{:02x} = {}", name, idx, key)?;
+                    }
+                }
+            }
+        }
+    }
+}
+
 macro_rules! make_key_macros {
     ($self:ident, $section:ident) => {
         macro_rules! single_key {
@@ -193,7 +266,9 @@ macro_rules! make_key_macros {
                     let mut key = [0; 0x10];
                     // remove trailing s
                     let mut name = String::from(stringify!($keyname));
-                    name.pop();
+                    if name.bytes().last() == Some(b's') {
+                        name.pop();
+                    }
                     v.or_in(key_to_aes_array($section, &name, idx, &mut key)?.map(|()| Aes128Key(key)));
                 }
             }
@@ -219,7 +294,9 @@ macro_rules! make_key_macros {
                     let mut key = [0; 0xB0];
                     // remove trailing s
                     let mut name = String::from(stringify!($keyname));
-                    name.pop();
+                    if name.bytes().last() == Some(b's') {
+                        name.pop();
+                    }
                     v.or_in(key_to_aes_array($section, &name, idx, &mut key)?.map(|()| EncryptedKeyblob(key)));
                 }
             }
@@ -341,6 +418,47 @@ impl Keys {
         let section = config.general_section();
 
         make_key_macros!(self, section);
+        single_key!(secure_boot_key);
+        single_key!(tsec_key);
+        multi_key!(keyblob_keys);
+        multi_key!(keyblob_mac_keys);
+        multi_key!(keyblob_key_sources);
+        multi_encrypted_keyblob!(encrypted_keyblobs);
+        multi_keyblob!(keyblobs);
+        single_key!(keyblob_mac_key_source);
+        single_key!(tsec_root_key);
+        multi_key!(master_kek_sources);
+        multi_key!(master_keks);
+        single_key!(master_key_source);
+        multi_key!(master_keys);
+        multi_key!(package1_keys);
+        multi_key!(package2_keys);
+        single_key!(package2_key_source);
+        single_key!(aes_kek_generation_source);
+        single_key!(aes_key_generation_source);
+        single_key!(key_area_key_application_source);
+        single_key!(key_area_key_ocean_source);
+        single_key!(key_area_key_system_source);
+        single_key!(titlekek_source);
+        single_key!(header_kek_source);
+        single_key!(sd_card_kek_source);
+        single_key_xts!(sd_card_save_key_source);
+        single_key_xts!(sd_card_nca_key_source);
+        single_key!(save_mac_kek_source);
+        single_key!(save_mac_key_source);
+        single_key_xts!(header_key_source);
+        single_key_xts!(header_key);
+        multi_key!(titlekeks);
+        multi_key!(key_area_key_application);
+        multi_key!(key_area_key_ocean);
+        multi_key!(key_area_key_system);
+        single_key_xts!(sd_card_save_key);
+        single_key_xts!(sd_card_nca_key);
+        Ok(())
+    }
+
+    pub fn write<W: Write>(&self, w: &mut W) -> io::Result<()> {
+        make_key_macros_write!(self, w);
         single_key!(secure_boot_key);
         single_key!(tsec_key);
         multi_key!(keyblob_keys);
