@@ -5,12 +5,12 @@ use std::io;
 // TODO: Document
 #[macro_export]
 macro_rules! enum_with_val {
-    ($(#[$meta:meta])* $vis:vis struct $ident:ident($ty:ty) {
+    ($(#[$meta:meta])* $vis:vis struct $ident:ident($consvis:vis $ty:ty) {
         $($variant:ident = $num:expr),* $(,)*
     }) => {
         $(#[$meta])*
         #[derive(PartialEq, Eq)]
-        $vis struct $ident($ty);
+        $vis struct $ident($consvis $ty);
         impl $ident {
             $(#[allow(non_upper_case_globals)] $vis const $variant: $ident = $ident($num);)*
         }
@@ -18,8 +18,8 @@ macro_rules! enum_with_val {
         impl ::core::fmt::Debug for $ident {
             fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
                 match self {
-                    $(&$ident::$variant => f.write_str(stringify!($ident)),)*
-                        &$ident(v) => write!(f, "UNKNOWN({})", v),
+                    $(&$ident::$variant => write!(f, "{}::{}", stringify!($ident), stringify!($variant)),)*
+                    &$ident(v) => write!(f, "{}::UNKNOWN({})", stringify!($ident), v),
                 }
             }
         }
@@ -104,6 +104,11 @@ macro_rules! impl_debug_deserialize_serialize_hexstring {
     }
 }
 
+pub fn align_up<T: Num + Not<Output = T> + BitAnd<Output = T> + Copy>(addr: T, align: T) -> T
+{
+    align_down(addr + (align - T::one()), align)
+}
+
 pub fn align_down<T: Num + Not<Output = T> + BitAnd<Output = T> + Copy>(addr: T, align: T) -> T
 {
     addr & !(align - T::one())
@@ -137,6 +142,11 @@ impl<R> ReadRange<R> {
 
     pub fn pos_in_stream(&self) -> u64 {
         self.start_from + self.inner_pos
+    }
+
+    /// Very dangerous. Don't use.
+    pub fn as_inner_mut(&mut self) -> &mut R {
+        &mut self.inner
     }
 }
 

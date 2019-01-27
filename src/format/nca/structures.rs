@@ -70,6 +70,7 @@ pub union RawSuperblock {
     //romfs_superblock: RomfsSuperblock,
     //bktrs_superblock: BktrSuperblock,
     //nca0_romfs_superblock: Nca0RomfsSuperblock,
+    pub raw: [u8; 0x138]
 }
 assert_eq_size!(assert_superblock_size; RawSuperblock, [u8; 0x138]);
 
@@ -89,21 +90,21 @@ assert_eq_size!(assert_nca_fs_header_size; RawNcaFsHeader, [u8; 0x148 + 0xB8]);
 
 enum_with_val! {
     #[derive(Clone, Copy)]
-    pub struct RawPartitionType(u8) {
+    pub struct RawPartitionType(pub u8) {
         RomFs = 0, Pfs0 = 1
     }
 }
 
 enum_with_val! {
     #[derive(Clone, Copy)]
-    pub struct RawFsType(u8) {
+    pub struct RawFsType(pub u8) {
         Pfs0 = 2, RomFs = 3
     }
 }
 
 enum_with_val! {
     #[derive(Clone, Copy)]
-    pub struct RawCryptType(u8) {
+    pub struct RawCryptType(pub u8) {
         None = 1, Xts = 2, Ctr = 3, Bktr = 4
     }
 }

@@ -5,6 +5,7 @@ extern crate linkle;
 use std::fs::{OpenOptions, File};
 use std::path::{Path, PathBuf};
 use std::process;
+use std::io::Read;
 use structopt::StructOpt;
 use linkle::error::ResultExt;
 
@@ -76,6 +77,42 @@ enum Opt {
         /// Sets the output file to extract the header to.
         #[structopt(parse(from_os_str), long = "header-json")]
         header_file: Option<PathBuf>,
+
+        /// Sets the output file to extract the section0 to.
+        #[structopt(parse(from_os_str), long = "section0")]
+        section0_file: Option<PathBuf>,
+
+        /// Sets the output file to extract the section1 to.
+        #[structopt(parse(from_os_str), long = "section1")]
+        section1_file: Option<PathBuf>,
+
+        /// Sets the output file to extract the section2 to.
+        #[structopt(parse(from_os_str), long = "section2")]
+        section2_file: Option<PathBuf>,
+
+        /// Sets the output file to extract the section3 to.
+        #[structopt(parse(from_os_str), long = "section3")]
+        section3_file: Option<PathBuf>,
+
+        /// Use development keys instead of retail
+        #[structopt(short = "d", long = "dev")]
+        dev: bool,
+
+        /// Keyfile
+        #[structopt(parse(from_os_str), short = "k", long = "keyset")]
+        keyfile: Option<PathBuf>,
+    },
+
+    /// Create an NCA file.
+    #[structopt(name = "nca")]
+    Nca {
+        /// The input JSON NCA header to create this NCA from.
+        #[structopt(parse(from_os_str), long = "header-json")]
+        header_file: PathBuf,
+
+        /// The output NCA location
+        #[structopt(parse(from_os_str))]
+        output_file: PathBuf,
 
         /// Sets the output file to extract the section0 to.
         #[structopt(parse(from_os_str), long = "section0")]
@@ -172,8 +209,7 @@ fn extract_nca(input_file: &Path, is_dev: bool, key_path: Option<&Path>,
     } else {
         linkle::pki::Keys::new_retail(key_path).unwrap()
     };
-    println!("{:#?}", keys);
-    /*let nca = linkle::format::nca::Nca::from_file(&keys, File::open(input_file)?).unwrap();
+    let nca = linkle::format::nca::Nca::from_file(&keys, File::open(input_file)?).unwrap();
     if let Some(output_header_json) = output_header_json {
         let mut output_header_json = File::create(output_header_json)?;
         nca.write_json(&mut output_header_json).unwrap();
@@ -197,7 +233,42 @@ fn extract_nca(input_file: &Path, is_dev: bool, key_path: Option<&Path>,
         let mut output_section3 = File::create(output_section3)?;
         let mut section = nca.section(3).unwrap();
         std::io::copy(&mut section, &mut output_section3)?;
-    }*/
+    }
+    Ok(())
+}
+
+fn create_nca(is_dev: bool, key_path: Option<&Path>, header_file: &Path,
+              output_nca: &Path,
+              section0_path: Option<&Path>, section1_path: Option<&Path>,
+              section2_path: Option<&Path>, section3_path: Option<&Path>) -> Result<(), linkle::error::Error> {
+    let keys = if is_dev {
+        linkle::pki::Keys::new_dev(key_path).unwrap()
+    } else {
+        linkle::pki::Keys::new_retail(key_path).unwrap()
+    };
+    let nca: linkle::format::nca::NcaJson = serde_json::from_reader(File::open(header_file)?).unwrap();
+    let mut output_nca = linkle::format::nca::Nca::nca_writer(nca, File::create(output_nca)?, &keys)?;
+    if let Some(section_path) = section0_path {
+        let mut section = output_nca.section(0)?;
+        std::io::copy(&mut File::open(section_path)?, &mut section)?;
+        section.finalize()?;
+    }
+    if let Some(section_path) = section1_path {
+        let mut section = output_nca.section(1)?;
+        std::io::copy(&mut File::open(section_path)?, &mut section)?;
+        section.finalize()?;
+    }
+    if let Some(section_path) = section2_path {
+        let mut section = output_nca.section(2)?;
+        std::io::copy(&mut File::open(section_path)?, &mut section)?;
+        section.finalize()?;
+    }
+    if let Some(section_path) = section3_path {
+        let mut section = output_nca.section(3)?;
+        std::io::copy(&mut File::open(section_path)?, &mut section)?;
+        section.finalize()?;
+    }
+    output_nca.finalize()?;
     Ok(())
 }
 
@@ -211,10 +282,17 @@ fn process_args(app: &Opt) {
         Opt::NcaExtract { ref input_file, ref header_file, ref section0_file,
                           ref section1_file, ref section2_file,
                           ref section3_file, dev, ref keyfile } => extract_nca(input_file, *dev, to_opt_ref(keyfile), to_opt_ref(header_file), to_opt_ref(section0_file), to_opt_ref(section1_file), to_opt_ref(section2_file), to_opt_ref(section3_file)),
+        Opt::Nca { ref header_file, ref output_file, ref section0_file,
+                   ref section1_file, ref section2_file,
+                   ref section3_file, dev, ref keyfile } => create_nca(*dev, to_opt_ref(keyfile), header_file, output_file, to_opt_ref(section0_file), to_opt_ref(section1_file), to_opt_ref(section2_file), to_opt_ref(section3_file)),
     };
 
     if let Err(e) = res {
-        println!("Error: {}", e);
+        if let Ok(_) = std::env::var("RUST_BACKTRACE") {
+            println!("Error: {:?}", e);
+        } else {
+            println!("Error: {}", e);
+        }
         process::exit(1)
     }
 }

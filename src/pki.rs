@@ -15,12 +15,12 @@ use getset::Getters;
 use cmac::crypto_mac::Mac;
 
 #[derive(Clone, Copy)]
-pub struct Aes128Key([u8; 0x10]);
+pub struct Aes128Key(pub [u8; 0x10]);
 #[derive(Clone, Copy)]
-pub struct AesXtsKey([u8; 0x20]);
-pub struct EncryptedKeyblob([u8; 0xB0]);
-pub struct Keyblob([u8; 0x90]);
-pub struct Modulus([u8; 0x100]);
+pub struct AesXtsKey(pub [u8; 0x20]);
+pub struct EncryptedKeyblob(pub [u8; 0xB0]);
+pub struct Keyblob(pub [u8; 0x90]);
+pub struct Modulus(pub [u8; 0x100]);
 
 impl_debug_deserialize_serialize_hexstring!(Aes128Key);
 impl_debug_deserialize_serialize_hexstring!(AesXtsKey);
@@ -134,22 +134,35 @@ fn get_tweak(mut sector: usize) -> [u8; 0x10] {
 }
 
 impl AesXtsKey {
-    pub fn decrypt(&self, src: &[u8], dst: &mut [u8], mut sector: usize, sector_size: usize) -> Result<(), Error> {
-        if src.len() != dst.len() {
-            return Err(Error::Crypto(String::from("Src len different from dst len"), Backtrace::new()));
-        }
-        if src.len() % sector_size != 0 {
+    pub fn decrypt(&self, data: &mut [u8], mut sector: usize, sector_size: usize) -> Result<(), Error> {
+        if data.len() % sector_size != 0 {
             return Err(Error::Crypto(String::from("Length must be multiple of sectors!"), Backtrace::new()));
         }
 
-        dst.copy_from_slice(src);
-        for i in (0..src.len()).step_by(sector_size){
+        for i in (0..data.len()).step_by(sector_size){
             let tweak = get_tweak(sector);
 
             let key1 = Aes128::new(GenericArray::from_slice(&self.0[0x00..0x10]));
             let key2 = Aes128::new(GenericArray::from_slice(&self.0[0x10..0x20]));
             let mut crypter = Xts128::<Aes128, ZeroPadding>::new(key1, key2, GenericArray::from_slice(&tweak));
-            crypter.decrypt_nopad(&mut dst[i..i + sector_size])?;
+            crypter.decrypt_nopad(&mut data[i..i + sector_size])?;
+            sector += 1;
+        }
+        Ok(())
+    }
+
+    pub fn encrypt(&self, data: &mut [u8], mut sector: usize, sector_size: usize) -> Result<(), Error> {
+        if data.len() % sector_size != 0 {
+            return Err(Error::Crypto(String::from("Length must be multiple of sectors!"), Backtrace::new()));
+        }
+
+        for i in (0..data.len()).step_by(sector_size) {
+            let tweak = get_tweak(sector);
+
+            let key1 = Aes128::new(GenericArray::from_slice(&self.0[0x00..0x10]));
+            let key2 = Aes128::new(GenericArray::from_slice(&self.0[0x10..0x20]));
+            let mut crypter = Xts128::<Aes128, ZeroPadding>::new(key1, key2, GenericArray::from_slice(&tweak));
+            crypter.encrypt_nopad(&mut data[i..i + sector_size])?;
             sector += 1;
         }
         Ok(())
