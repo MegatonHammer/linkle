@@ -178,7 +178,7 @@ fn to_opt_ref<U: ?Sized, T: AsRef<U>>(s: &Option<T>) -> Option<&U> {
 fn process_args(app: &Opt) {
     let res = match app {
         Opt::Nro { ref input_file, ref output_file, ref icon, ref romfs, ref nacp } => create_nxo("nro", input_file, output_file, to_opt_ref(icon), to_opt_ref(romfs), to_opt_ref(nacp)),
-        Opt::Nso { ref input_file, ref output_file } => create_nxo("nro", input_file, output_file, None, None, None),
+        Opt::Nso { ref input_file, ref output_file } => create_nxo("nso", input_file, output_file, None, None, None),
         Opt::Pfs0 { ref input_directory, ref output_file } => create_pfs0(input_directory, output_file),
         Opt::Pfs0Extract { ref input_file, ref output_directory } => extract_pfs0(input_file, output_directory),
         Opt::Nacp { ref input_file, ref output_file } => create_nacp(input_file, output_file),
