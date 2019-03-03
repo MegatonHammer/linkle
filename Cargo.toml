@@ -20,7 +20,7 @@ required-features = ["binaries"]
 [dependencies]
 elf = "0.0.10"
 byteorder = "1"
-lz4 = { git = "https://github.com/bozaro/lz4-rs.git"}
+lz4 = "1.23.1"
 clap = { version = "2", optional = true }
 structopt = { version = "0.2", optional = true }
 sha2 = "0.7.1"
