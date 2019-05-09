@@ -1,6 +1,6 @@
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use elf;
-use elf::types::{EM_AARCH64, ProgramHeader, PT_LOAD, SHT_NOTE};
+use elf::types::{EM_ARM, EM_AARCH64, ProgramHeader, PT_LOAD, SHT_NOTE};
 use crate::format::{utils, romfs::RomFs, nacp::NacpFile};
 use std;
 use std::fs::File;
@@ -59,8 +59,8 @@ impl NxoFile {
 
         let elf_file = elf::File::open_stream(&mut file).unwrap();
 
-        if elf_file.ehdr.machine != EM_AARCH64 {
-            println!("Error: Invalid ELF file (expected AArch64 machine)");
+        if elf_file.ehdr.machine != EM_AARCH64 && elf_file.ehdr.machine != EM_ARM {
+            println!("Error: Invalid ELF file (expected ARM or AArch64 machine)");
             process::exit(1)
         }
 
