@@ -10,6 +10,8 @@ use derive_more::Display;
 
 #[derive(Debug, Fail, Display)]
 pub enum Error {
+    #[display(fmt = "Failed to deserialize: {}", _0)]
+    Deserialization(#[cause] serde_json::error::Error),
     #[display(fmt = "{}: {}", "_1.display()", _0)]
     Io(#[cause] io::Error, PathBuf, Backtrace),
     #[display(fmt = "Internal IO Error (please submit a bug report with the backtrace): {}", _0)]
@@ -73,6 +75,12 @@ impl From<ini::ini::Error> for Error {
 impl From<BlockModeError> for Error {
     fn from(err: BlockModeError) -> Error {
         Error::BlockMode(err, Backtrace::new())
+    }
+}
+
+impl From<serde_json::error::Error> for Error {
+    fn from(err: serde_json::error::Error) -> Error {
+        Error::Deserialization(err)
     }
 }
 
