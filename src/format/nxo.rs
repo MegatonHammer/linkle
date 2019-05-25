@@ -1,6 +1,6 @@
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use elf;
-use elf::types::{EM_ARM, EM_AARCH64, ProgramHeader, PT_LOAD, SHT_NOTE};
+use elf::types::{EM_ARM, EM_AARCH64, ProgramHeader, PT_LOAD, SHT_NOTE, Machine};
 use crate::format::{utils, romfs::RomFs, nacp::NacpFile, npdm::KernelCapability};
 use std;
 use std::fs::File;
@@ -14,16 +14,12 @@ use std::convert::TryFrom;
 // TODO: Support switchbrew's embedded files for NRO
 pub struct NxoFile {
     file: File,
+    machine: Machine,
     text_section: ProgramHeader,
     rodata_section: ProgramHeader,
     data_section: ProgramHeader,
     bss_section: Option<ProgramHeader>,
     build_id: Option<Vec<u8>>,
-}
-
-fn default_flags() -> u8 {
-    // Compression enable, Is64Bit, IsAddrSpace32Bit, UseSystemPoolPartition
-    0b00111111
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -34,8 +30,7 @@ pub struct KipNpdm {
     main_thread_priority: u8,
     default_cpu_id: u8,
     process_category: u8,
-    #[serde(default = "default_flags")]
-    flags: u8,
+    flags: Option<u8>,
     kernel_capabilities: Vec<KernelCapability>,
 }
 
@@ -132,6 +127,7 @@ impl NxoFile {
 
         Ok(NxoFile {
             file,
+            machine: elf_file.ehdr.machine,
             text_section: *text_section,
             rodata_section: *rodata_section,
             data_section: *data_section,
@@ -441,7 +437,17 @@ impl NxoFile {
         output_writer.write_u8(npdm.main_thread_priority)?;
         output_writer.write_u8(npdm.default_cpu_id)?;
         output_writer.write_u8(0)?; // Reserved
-        output_writer.write_u8(npdm.flags)?;
+        if let Some(flags) = npdm.flags {
+            output_writer.write_u8(flags)?;
+        } else if self.machine == EM_AARCH64 {
+            // Compression enable, Is64Bit, IsAddrSpace32Bit, UseSystemPoolPartition
+            output_writer.write_u8(0b00111111)?;
+        } else if self.machine == EM_ARM {
+            // Compression enable, UseSystemPoolPartition
+            output_writer.write_u8(0b00100111)?;
+        } else {
+            unimplemented!("Unknown machine type");
+        }
 
         let mut section_data = utils::get_section_data(&mut self.file, &self.text_section)?;
         let text_data = utils::compress_blz(&mut section_data).unwrap();
