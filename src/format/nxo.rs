@@ -1,21 +1,37 @@
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use elf;
-use elf::types::{EM_ARM, EM_AARCH64, ProgramHeader, PT_LOAD, SHT_NOTE};
-use crate::format::{utils, romfs::RomFs, nacp::NacpFile};
+use elf::types::{EM_ARM, EM_AARCH64, ProgramHeader, PT_LOAD, SHT_NOTE, Machine};
+use crate::format::{utils, romfs::RomFs, nacp::NacpFile, npdm::KernelCapability};
 use std;
 use std::fs::File;
 use std::io::{self, Cursor, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process;
+use serde_derive::{Serialize, Deserialize};
+use crate::format::utils::HexOrNum;
+use std::convert::TryFrom;
 
 // TODO: Support switchbrew's embedded files for NRO
 pub struct NxoFile {
     file: File,
+    machine: Machine,
     text_section: ProgramHeader,
     rodata_section: ProgramHeader,
     data_section: ProgramHeader,
     bss_section: Option<ProgramHeader>,
     build_id: Option<Vec<u8>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct KipNpdm {
+    name: String,
+    title_id: HexOrNum,
+    main_thread_stack_size: HexOrNum,
+    main_thread_priority: u8,
+    default_cpu_id: u8,
+    process_category: u8,
+    flags: Option<u8>,
+    kernel_capabilities: Vec<KernelCapability>,
 }
 
 fn pad_segment(previous_segment_data: &mut Vec<u8>, offset: usize, section: &ProgramHeader) {
@@ -111,6 +127,7 @@ impl NxoFile {
 
         Ok(NxoFile {
             file,
+            machine: elf_file.ehdr.machine,
             text_section: *text_section,
             rodata_section: *rodata_section,
             data_section: *data_section,
@@ -406,4 +423,100 @@ impl NxoFile {
         output_writter.write_all(&compressed_data)?;
         Ok(())
     }
+
+    pub fn write_kip1<T>(&mut self, output_writer: &mut T, npdm: &KipNpdm) -> std::io::Result<()>
+    where
+        T: Write,
+    {
+        output_writer.write_all(b"KIP1")?;
+        let mut name : Vec<u8> = npdm.name.clone().into();
+        name.resize(12, 0);
+        output_writer.write_all(&name[..])?;
+        output_writer.write_u64::<LittleEndian>(npdm.title_id.0)?; // TitleId
+        output_writer.write_u32::<LittleEndian>(u32::from(npdm.process_category))?;
+        output_writer.write_u8(npdm.main_thread_priority)?;
+        output_writer.write_u8(npdm.default_cpu_id)?;
+        output_writer.write_u8(0)?; // Reserved
+        if let Some(flags) = npdm.flags {
+            output_writer.write_u8(flags)?;
+        } else if self.machine == EM_AARCH64 {
+            // Compression enable, Is64Bit, IsAddrSpace32Bit, UseSystemPoolPartition
+            output_writer.write_u8(0b00111111)?;
+        } else if self.machine == EM_ARM {
+            // Compression enable, UseSystemPoolPartition
+            output_writer.write_u8(0b00100111)?;
+        } else {
+            unimplemented!("Unknown machine type");
+        }
+
+        let mut section_data = utils::get_section_data(&mut self.file, &self.text_section)?;
+        let text_data = utils::compress_blz(&mut section_data).unwrap();
+        let mut section_data = utils::get_section_data(&mut self.file, &self.rodata_section)?;
+        let rodata_data = utils::compress_blz(&mut section_data).unwrap();
+        let mut section_data = utils::get_section_data(&mut self.file, &self.data_section)?;
+        let data_data = utils::compress_blz(&mut section_data).unwrap();
+
+        write_kip_section_header(output_writer, &self.text_section, 0, text_data.len() as u32)?;
+        write_kip_section_header(output_writer, &self.rodata_section, u32::try_from(npdm.main_thread_stack_size.0).expect("Exected main_thread_stack_size to be an u32"), rodata_data.len() as u32)?;
+        write_kip_section_header(output_writer, &self.data_section, 0, data_data.len() as u32)?;
+
+        if let Some(section) = self.bss_section {
+            output_writer.write_u32::<LittleEndian>(u32::try_from(section.vaddr).expect("BSS vaddr too big"))?;
+            output_writer.write_u32::<LittleEndian>(u32::try_from(section.memsz).expect("BSS memsize too big"))?;
+        } else {
+            // in this case the bss is missing or is embedeed in .data. libnx does that, let's support it
+            let data_section_size = (self.data_section.filesz + 0xFFF) & !0xFFF;
+            let bss_size = if self.data_section.memsz > data_section_size {
+                (((self.data_section.memsz - data_section_size) + 0xFFF) & !0xFFF) as u32
+            } else {
+                0
+            };
+            output_writer.write_u32::<LittleEndian>(u32::try_from(self.data_section.vaddr + data_section_size).unwrap())?;
+            output_writer.write_u32::<LittleEndian>(bss_size)?;
+        }
+        output_writer.write_u32::<LittleEndian>(0)?;
+        output_writer.write_u32::<LittleEndian>(0)?;
+
+        // Empty Sections:
+        for i in 4..6 {
+            output_writer.write_u32::<LittleEndian>(0)?;
+            output_writer.write_u32::<LittleEndian>(0)?;
+            output_writer.write_u32::<LittleEndian>(0)?;
+            output_writer.write_u32::<LittleEndian>(0)?;
+        }
+
+        // Kernel caps:
+        let caps = npdm.kernel_capabilities.iter()
+            .map(|v| v.encode())
+            .flatten()
+            .collect::<Vec<u32>>();
+        assert!(caps.len() < 0x20, "kernel_capabilities should have less than 0x20 entries!");
+
+        unsafe {
+            // Safety: This is safe. I'm just casting a slice of u32 to a slice of u8
+            // for fuck's sake.
+            output_writer.write_all(std::slice::from_raw_parts(caps.as_ptr() as *const u8, caps.len() * 4))?;
+        }
+
+        output_writer.write_all(&vec![0xFF; (0x20 - caps.len()) * 4])?;
+
+        // Section data
+        output_writer.write_all(&text_data);
+        output_writer.write_all(&rodata_data);
+        output_writer.write_all(&data_data);
+
+        Ok(())
+    }
+}
+
+pub fn write_kip_section_header<T>(output_writer: &mut T, section: &ProgramHeader, attributes: u32, compressed_size: u32) -> std::io::Result<()>
+where
+    T: Write,
+{
+    output_writer.write_u32::<LittleEndian>(u32::try_from(section.vaddr).expect("vaddr too big"))?;
+    output_writer.write_u32::<LittleEndian>(u32::try_from(section.filesz).expect("memsz too big"))?;
+    output_writer.write_u32::<LittleEndian>(u32::try_from(compressed_size).expect("Compressed size too big"))?;
+    output_writer.write_u32::<LittleEndian>(attributes)?;
+
+    Ok(())
 }

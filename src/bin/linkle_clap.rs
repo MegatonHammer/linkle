@@ -40,6 +40,16 @@ enum Opt {
         /// Sets the output file to use.
         output_file: String,
     },
+    /// Create a KIP file from an ELF and an NPDM file.
+    #[structopt(name = "kip")]
+    Kip {
+        /// Sets the input ELF file to use.
+        input_file: String,
+        /// Sets the input NPDM JSON file to use.
+        npdm_file: String,
+        /// Sets the output file to use.
+        output_file: String,
+    },
     /// Create a PFS0 or NSP file from a directory.
     #[structopt(name = "pfs0"/*, raw(alias = "nsp")*/)]
     Pfs0 {
@@ -117,6 +127,18 @@ fn create_nxo(format: &str, input_file: &str, output_file: &str, icon_file: Opti
     Ok(())
 }
 
+fn create_kip(input_file: &str, npdm_file: &str, output_file: &str) -> Result<(), linkle::error::Error> {
+    let mut nxo = linkle::format::nxo::NxoFile::from_elf(&input_file).map_err(|err| (err, &input_file))?;
+    let npdm = serde_json::from_reader(File::open(npdm_file).map_err(|err| (err, npdm_file))?)?;
+
+    let mut option = OpenOptions::new();
+    let output_option = option.write(true).create(true).truncate(true);
+    output_option.open(output_file)?;
+    
+    nxo.write_kip1(&mut output_option.open(output_file).map_err(|err| (err, output_file))?, &npdm).map_err(|err| (err, output_file))?;
+    Ok(())
+}
+
 fn create_pfs0(input_directory: &str, output_file: &str) -> Result<(), linkle::error::Error> {
     let mut pfs0 = linkle::format::pfs0::Pfs0::from_directory(&input_directory)?;
     let mut option = OpenOptions::new();
@@ -179,6 +201,7 @@ fn process_args(app: &Opt) {
     let res = match app {
         Opt::Nro { ref input_file, ref output_file, ref icon, ref romfs, ref nacp } => create_nxo("nro", input_file, output_file, to_opt_ref(icon), to_opt_ref(romfs), to_opt_ref(nacp)),
         Opt::Nso { ref input_file, ref output_file } => create_nxo("nso", input_file, output_file, None, None, None),
+        Opt::Kip { ref input_file, ref npdm_file, ref output_file } => create_kip(input_file, npdm_file, output_file),
         Opt::Pfs0 { ref input_directory, ref output_file } => create_pfs0(input_directory, output_file),
         Opt::Pfs0Extract { ref input_file, ref output_directory } => extract_pfs0(input_file, output_directory),
         Opt::Nacp { ref input_file, ref output_file } => create_nacp(input_file, output_file),
