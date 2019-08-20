@@ -94,6 +94,16 @@ enum Opt {
         /// Key file to use
         #[structopt(parse(from_os_str), short = "k", long = "keyset")]
         keyfile: Option<PathBuf>,
+    },
+    /// Create an NPDM from a JSON-NPDM formatted file.
+    #[structopt(name = "npdm")]
+    Npdm {
+        /// Sets the input JSON file to use.
+        #[structopt(parse(from_os_str))]
+        input_file: PathBuf,
+        /// Sets the output NPDM file to use.
+        #[structopt(parse(from_os_str))]
+        output_file: PathBuf,
     }
 }
 
@@ -134,7 +144,7 @@ fn create_kip(input_file: &str, npdm_file: &str, output_file: &str) -> Result<()
     let mut option = OpenOptions::new();
     let output_option = option.write(true).create(true).truncate(true);
     output_option.open(output_file)?;
-    
+
     nxo.write_kip1(&mut output_option.open(output_file).map_err(|err| (err, output_file))?, &npdm).map_err(|err| (err, output_file))?;
     Ok(())
 }
@@ -193,6 +203,15 @@ fn print_keys(is_dev: bool, key_path: Option<&Path>) -> Result<(), linkle::error
     Ok(())
 }
 
+fn create_npdm(input_file: &Path, output_file: &Path) -> Result<(), linkle::error::Error> {
+    let mut npdm = linkle::format::npdm::NpdmJson::from_file(&input_file)?;
+    let mut option = OpenOptions::new();
+    let output_option = option.write(true).create(true).truncate(true);
+    let mut out_file = output_option.open(output_file).map_err(|err| (err, output_file))?;
+    npdm.into_npdm(&mut out_file, false)?;
+    Ok(())
+}
+
 fn to_opt_ref<U: ?Sized, T: AsRef<U>>(s: &Option<T>) -> Option<&U> {
     s.as_ref().map(AsRef::as_ref)
 }
@@ -207,6 +226,7 @@ fn process_args(app: &Opt) {
         Opt::Nacp { ref input_file, ref output_file } => create_nacp(input_file, output_file),
         Opt::Romfs { ref input_directory, ref output_file } => create_romfs(input_directory, output_file),
         Opt::Keygen { dev, ref keyfile } => print_keys(*dev, to_opt_ref(keyfile)),
+        Opt::Npdm { ref input_file, ref output_file } => create_npdm(input_file, output_file)
     };
 
     if let Err(e) = res {
