@@ -10,6 +10,20 @@ use std::convert::TryFrom;
 use std::path::Path;
 use std::mem::size_of;
 use failure::Backtrace;
+use sha2::{Digest, Sha256};
+use rsa::{BigUint, RSAPrivateKey};
+
+pub mod syscalls;
+
+// TODO: Pretty errors if the user messes up.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Syscalls {
+    /// Accepts the standard svcName: 0xsvc_hex
+    KeyValue(HashMap<String, HexOrNum>),
+    /// Accepts syscall names. Those must be correctly spelled.
+    Name(Vec<syscalls::SyscallNames>),
+}
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type", content = "value")]
@@ -21,7 +35,7 @@ pub enum KernelCapability {
         highest_cpu_id: u8,
         lowest_cpu_id: u8,
     },
-    Syscalls(HashMap<String, HexOrNum>),
+    Syscalls(Syscalls),
     Map {
         address: HexOrNum,
         size: HexOrNum,
@@ -39,6 +53,24 @@ pub enum KernelCapability {
     },
 }
 
+fn encode_syscalls<I: Iterator<Item=u32>>(syscalls: I) -> Vec<u32> {
+    let mut masks = vec![0b1111u32; 6];
+    let mut used = [false; 6];
+    for (idx, mask) in masks.iter_mut().enumerate() {
+        mask.set_bits(29..32, idx as u32);
+    }
+    for syscall_val in syscalls {
+        masks[syscall_val as usize / 24].set_bit(usize::try_from((syscall_val % 24) + 5).unwrap(), true);
+        used[syscall_val as usize / 24] = true;
+    }
+    for (idx, used) in used.iter().enumerate().rev() {
+        if !used {
+            masks.remove(idx);
+        }
+    }
+    masks
+}
+
 impl KernelCapability {
     pub fn encode(&self) -> Vec<u32> {
         match self {
@@ -54,22 +86,11 @@ impl KernelCapability {
                     .set_bits(16..24, u32::from(*lowest_cpu_id))
                     .set_bits(24..32, u32::from(*highest_cpu_id))]
             },
-            KernelCapability::Syscalls(syscalls) => {
-                let mut masks = vec![0b1111u32; 6];
-                let mut used = [false; 6];
-                for (idx, mask) in masks.iter_mut().enumerate() {
-                    mask.set_bits(29..32, idx as u32);
-                }
-                for (_syscall_name, syscall_val) in syscalls {
-                    masks[syscall_val.0 as usize / 24].set_bit(usize::try_from((syscall_val.0 % 24) + 5).unwrap(), true);
-                    used[syscall_val.0 as usize / 24] = true;
-                }
-                for (idx, used) in used.iter().enumerate().rev() {
-                    if !used {
-                        masks.remove(idx);
-                    }
-                }
-                masks
+            KernelCapability::Syscalls(Syscalls::Name(syscalls)) => {
+                encode_syscalls(syscalls.iter().map(|v| *v as u32))
+            },
+            KernelCapability::Syscalls(Syscalls::KeyValue(syscalls)) => {
+                encode_syscalls(syscalls.iter().map(|(_, v)| v.0 as u32))
             },
             KernelCapability::Map {
                 address,
@@ -144,8 +165,8 @@ pub struct NpdmJson {
     // ACID fields
     is_retail: bool,
     pool_partition: u32,
-    title_id_range_min: HexOrNum,
-    title_id_range_max: HexOrNum,
+    title_id_range_min: Option<HexOrNum>,
+    title_id_range_max: Option<HexOrNum>,
     developer_key: Option<String>,
 
     // ACI0
@@ -162,10 +183,10 @@ pub struct NpdmJson {
     kernel_capabilities: Vec<KernelCapability>,
 }
 
-enum ACIDBehavior<'a> {
-    Sign,
+pub enum ACIDBehavior<'a> {
+    Sign { pem_file_path: &'a Path },
     Empty,
-    Use(&'a [u8])
+    Use { acid_file_path: &'a Path }
 }
 
 impl NpdmJson {
@@ -178,7 +199,7 @@ impl NpdmJson {
     }
 
     // TODO: Optionally pass a (signed) ACID here.
-    pub fn into_npdm<W: Write>(&self, mut file: W, _signed: bool) -> Result<(), Error> {
+    pub fn into_npdm<W: Write>(&self, mut file: W, acid_behavior: ACIDBehavior) -> Result<(), Error> {
         let mut meta: RawMeta = RawMeta::default();
 
         meta.magic = *b"META";
@@ -203,101 +224,76 @@ impl NpdmJson {
 
         meta.product_code = [0; 0x10];
 
-        meta.aci_offset = (size_of::<RawMeta>() + size_of::<RawAcid>() +
-            size_of::<RawFileSystemAccessControl>() +
-            sac_encoded_len(&self.service_host) + sac_encoded_len(&self.service_access) +
-            self.kernel_capabilities.iter().map(|v| v.encode().len()).sum::<usize>()) as u32;
+        meta.acid_offset = size_of::<RawMeta>() as u32;
+        meta.acid_size = match acid_behavior {
+            ACIDBehavior::Sign { .. } | ACIDBehavior::Empty => {
+                (0x100 + size_of::<RawAcid>() + size_of::<RawFileSystemAccessControl>() +
+                    sac_encoded_len(&self.service_host) + sac_encoded_len(&self.service_access) +
+                    self.kernel_capabilities.iter().map(|v| v.encode().len() * 4).sum::<usize>()) as u32
+            },
+            ACIDBehavior::Use { acid_file_path } => std::fs::metadata(acid_file_path)?.len() as u32,
+        };
+
+        meta.aci_offset = meta.acid_offset + meta.acid_size;
         meta.aci_size = (size_of::<RawAci>() + size_of::<RawFileSystemAccessHeader>() +
             sac_encoded_len(&self.service_host) + sac_encoded_len(&self.service_access) +
-            self.kernel_capabilities.iter().map(|v| v.encode().len()).sum::<usize>()) as u32;
-
-        meta.acid_offset = 0x80;
-        meta.acid_size = (size_of::<RawAcid>() + size_of::<RawFileSystemAccessControl>() +
-            sac_encoded_len(&self.service_host) + sac_encoded_len(&self.service_access) +
-            self.kernel_capabilities.iter().map(|v| v.encode().len()).sum::<usize>()) as u32;
+            self.kernel_capabilities.iter().map(|v| v.encode().len() * 4).sum::<usize>()) as u32;
 
         bincode::config().little_endian().serialize_into(&mut file, &meta)?;
 
-        let mut acid = RawAcid::default();
-        acid.rsa_acid_sig = SigOrPubKey([0; 0x100]);
-        acid.rsa_nca_pubkey = SigOrPubKey([0; 0x100]);
-        acid.magic = *b"ACID";
-        acid.signed_size = meta.acid_size - 0x100;
+        match acid_behavior {
+            ACIDBehavior::Sign { pem_file_path } => {
+                // Parse PEM file
+                let pkey = get_pkey_from_pem(pem_file_path)?;
 
-        acid.flags = 0u32;
-        if self.is_retail { acid.flags |= 1; }
+                let mut v = Vec::new();
+                write_acid(&mut v, self, &meta)?;
+                println!("Signing over {:02x?}", v);
 
-        if self.pool_partition & !3 != 0 {
-            return Err(Error::InvalidNpdmValue("pool_partition".into(), Backtrace::new()));
-        }
-        acid.flags |= (self.pool_partition & 3) << 2;
-        // TODO: Unqualified approval. Zefuk is this?
+                // calculate signature.
+                let mut hash = Sha256::new();
+                write_acid(&mut hash, self, &meta)?;
+                let hash = hash.result();
+                println!("Signing over {:02x?}", hash);
+                let sig = pkey.sign(rsa::PaddingScheme::PSS, Some(&rsa::hash::Hashes::SHA2_256), &hash)?;
+                assert_eq!(sig.len(), 0x100, "Signature of wrong length generated");
+                file.write_all(&sig)?;
 
-        acid.titleid_range_min = self.title_id_range_min.0;
-        acid.titleid_range_max = self.title_id_range_max.0;
-
-        acid.fs_access_control_offset = meta.acid_offset + size_of::<RawAcid>() as u32;
-        acid.fs_access_control_size = size_of::<RawFileSystemAccessControl>() as u32;
-
-        acid.service_access_control_offset = acid.fs_access_control_offset + acid.fs_access_control_size;
-        acid.service_access_control_size = (sac_encoded_len(&self.service_host) + sac_encoded_len(&self.service_access)) as u32;
-
-        acid.kernel_access_control_offset = acid.service_access_control_offset + acid.service_access_control_size;
-        acid.kernel_access_control_size = self.kernel_capabilities.iter().map(|v| v.encode().len()).sum::<usize>() as u32;
-
-
-        bincode::config().little_endian().serialize_into(&mut file, &acid)?;
-
-        let mut fac = RawFileSystemAccessControl::default();
-        fac.version = 1;
-        fac.padding = [0; 3];
-        fac.permissions_bitmask = self.filesystem_access.permissions.0;
-
-        bincode::config().little_endian().serialize_into(&mut file, &fac)?;
-
-        for elem in &self.service_access {
-            if elem.len() & !7 != 0 || elem.len() == 0 {
-                return Err(Error::InvalidNpdmValue(format!("service_access.{}", elem).into(), Backtrace::new()))
+                write_acid(&mut file, self, &meta)?;
+            },
+            ACIDBehavior::Empty => {
+                file.write_all(&[0; 0x100])?;
+                write_acid(&mut file, self, &meta)?;
             }
-            file.write_all(&[elem.len() as u8 - 1])?;
-            file.write_all(elem.as_bytes())?;
-        }
-
-        for elem in &self.service_host {
-            if elem.len() & !7 != 0 || elem.len() == 0 {
-                return Err(Error::InvalidNpdmValue(format!("service_host.{}", elem).into(), Backtrace::new()))
+            ACIDBehavior::Use { acid_file_path } => {
+                let mut acid_file = std::fs::File::open(acid_file_path)?;
+                std::io::copy(&mut acid_file, &mut file)?;
             }
-            file.write_all(&[0x80 | (elem.len() as u8 - 1)])?;
-            file.write_all(elem.as_bytes())?;
-        }
-
-        for elem in &self.kernel_capabilities {
-            bincode::config().little_endian().serialize_into(&mut file, &elem)?;
         }
 
         // ACI0
         let mut aci0 = RawAci::default();
         aci0.magic = *b"ACI0";
         aci0.titleid = self.title_id.0;
-        aci0.fs_access_header_offset = meta.aci_offset + size_of::<RawAci>() as u32;
+        aci0.fs_access_header_offset = size_of::<RawAci>() as u32;
         aci0.fs_access_header_size = size_of::<RawFileSystemAccessHeader>() as u32;
         aci0.service_access_control_offset = aci0.fs_access_header_offset + aci0.fs_access_header_size;
         aci0.service_access_control_size = (sac_encoded_len(&self.service_host) + sac_encoded_len(&self.service_access)) as u32;
-        aci0.service_access_control_offset = aci0.service_access_control_offset + aci0.service_access_control_size;
-        aci0.kernel_access_control_size = self.kernel_capabilities.iter().map(|v| v.encode().len()).sum::<usize>() as u32;
+        aci0.kernel_access_control_offset = aci0.service_access_control_offset + aci0.service_access_control_size;
+        aci0.kernel_access_control_size = self.kernel_capabilities.iter().map(|v| v.encode().len() * 4).sum::<usize>() as u32;
 
         bincode::config().little_endian().serialize_into(&mut file, &aci0)?;
 
         let mut fah = RawFileSystemAccessHeader::default();
         fah.version = 1;
         fah.padding = [0; 3];
-        fah.permissions_bitmask = self.filesystem_access.permissions.0;
+        fah.permissions_bitmask.copy_from_slice(&self.filesystem_access.permissions.0.to_le_bytes());
         fah.data_size = 0x1C; // Always 0x1C
         fah.size_of_content_owner_id = 0;
         fah.data_size_plus_content_owner_size = 0x1C;
         fah.size_of_save_data_owners = 0;
 
-        bincode::config().little_endian().serialize_into(&mut file, &fac)?;
+        bincode::config().little_endian().serialize_into(&mut file, &fah)?;
 
         for elem in &self.service_access {
             if elem.len() & !7 != 0 || elem.len() == 0 {
@@ -316,12 +312,132 @@ impl NpdmJson {
         }
 
         for elem in &self.kernel_capabilities {
-            bincode::config().little_endian().serialize_into(&mut file, &elem)?;
+            let encoded = elem.encode().iter().map(|v| v.to_le_bytes().to_vec()).flatten().collect::<Vec<u8>>();
+            file.write_all(&encoded)?;
         }
-
 
         Ok(())
     }
+}
+
+fn get_pkey_from_pem(path: &Path) -> Result<RSAPrivateKey, Error> {
+    let data = std::fs::read_to_string(path)?;
+    let data = pem::parse(data)?.contents;
+
+    let (n, e, d, prime1, prime2) = yasna::parse_der(&data, |reader| {
+        reader.read_sequence(|reader| {
+            let _v = reader.next().read_i64()?;
+            let _oid = reader.next().read_sequence(|reader| {
+                reader.next().read_oid()
+            })?;
+            let bytes = reader.next().read_bytes()?;
+            yasna::parse_der(&bytes, |reader| reader.read_sequence(|reader| {
+                let _v = reader.next().read_i64()?;
+                let modulus = reader.next().read_biguint()?;
+                let pubexp = reader.next().read_biguint()?;
+                let privexp = reader.next().read_biguint()?;
+                let prime1 = reader.next().read_biguint()?;
+                let prime2 = reader.next().read_biguint()?;
+                let _exp1 = reader.next().read_biguint()?;
+                let _exp2 = reader.next().read_biguint()?;
+                let _coeff = reader.next().read_biguint()?;
+                Ok((modulus, pubexp, privexp, prime1, prime2))
+            }))
+        })
+    })?;
+
+    let pkey = rsa::RSAPrivateKey::from_components(
+        BigUint::from_bytes_be(&n.to_bytes_be()),
+        BigUint::from_bytes_be(&e.to_bytes_be()),
+        BigUint::from_bytes_be(&d.to_bytes_be()),
+        vec![
+            BigUint::from_bytes_be(&prime1.to_bytes_be()),
+            BigUint::from_bytes_be(&prime2.to_bytes_be()),
+        ]
+    );
+    pkey.validate()?;
+
+    Ok(pkey)
+}
+
+fn write_acid<T: Write>(mut writer: &mut T, npdm: &NpdmJson, meta: &RawMeta) -> Result<(), Error> {
+    let mut acid = RawAcid::default();
+
+    if let Some(devkey) = &npdm.developer_key {
+        acid.rsa_nca_pubkey.0.copy_from_slice(&hex::decode(devkey).unwrap());
+    }
+
+    acid.magic = *b"ACID";
+    acid.signed_size = meta.acid_size - 0x100;
+
+    acid.flags = 0u32;
+    if npdm.is_retail { acid.flags |= 1; }
+
+    if npdm.pool_partition & !3 != 0 {
+        return Err(Error::InvalidNpdmValue("pool_partition".into(), Backtrace::new()));
+    }
+    acid.flags |= (npdm.pool_partition & 3) << 2;
+    // TODO: Unqualified approval. Zefuk is this?
+
+    acid.titleid_range_min = npdm.title_id_range_min.as_ref().unwrap_or(&npdm.title_id).0;
+    acid.titleid_range_max = npdm.title_id_range_max.as_ref().unwrap_or(&npdm.title_id).0;
+
+    acid.fs_access_control_offset = 0x100 + size_of::<RawAcid>() as u32;
+    acid.fs_access_control_size = size_of::<RawFileSystemAccessControl>() as u32;
+
+    acid.service_access_control_offset = acid.fs_access_control_offset + acid.fs_access_control_size;
+    acid.service_access_control_size = (sac_encoded_len(&npdm.service_host) + sac_encoded_len(&npdm.service_access)) as u32;
+
+    acid.kernel_access_control_offset = acid.service_access_control_offset + acid.service_access_control_size;
+    acid.kernel_access_control_size = npdm.kernel_capabilities.iter().map(|v| v.encode().len() * 4).sum::<usize>() as u32;
+
+    let mut fac = RawFileSystemAccessControl::default();
+    fac.version = 1;
+    fac.padding = [0; 3];
+    fac.permissions_bitmask.copy_from_slice(&npdm.filesystem_access.permissions.0.to_le_bytes());
+
+    let mut final_size = bincode::config().little_endian().serialized_size(&acid)?;
+    assert_eq!(final_size as usize, size_of::<RawAcid>(), "Serialized ACID has wrong size");
+    bincode::config().little_endian().serialize_into(&mut writer, &acid)?;
+
+    final_size += bincode::config().little_endian().serialized_size(&fac)?;
+    assert_eq!(final_size as usize, size_of::<RawAcid>() + size_of::<RawFileSystemAccessControl>(), "Serialized FAC has wrong size");
+    bincode::config().little_endian().serialize_into(&mut writer, &fac)?;
+
+    for elem in &npdm.service_access {
+        if elem.len() & !7 != 0 || elem.len() == 0 {
+            return Err(Error::InvalidNpdmValue(format!("service_access.{}", elem).into(), Backtrace::new()))
+        }
+        final_size += 1;
+        writer.write_all(&[elem.len() as u8 - 1])?;
+        final_size += elem.as_bytes().len() as u64;
+        writer.write_all(elem.as_bytes())?;
+    }
+
+    for elem in &npdm.service_host {
+        if elem.len() & !7 != 0 || elem.len() == 0 {
+            return Err(Error::InvalidNpdmValue(format!("service_host.{}", elem).into(), Backtrace::new()))
+        }
+        final_size += 1;
+        writer.write_all(&[0x80 | (elem.len() as u8 - 1)])?;
+        final_size += elem.as_bytes().len() as u64;
+        writer.write_all(elem.as_bytes())?;
+    }
+
+    assert_eq!(final_size as usize, size_of::<RawAcid>() + size_of::<RawFileSystemAccessControl>()
+        + sac_encoded_len(&npdm.service_access) + sac_encoded_len(&npdm.service_host), "Serialized SAC has wrong size");
+
+    for elem in &npdm.kernel_capabilities {
+        let encoded = elem.encode().iter().map(|v| v.to_le_bytes().to_vec()).flatten().collect::<Vec<u8>>();
+        final_size += encoded.len() as u64;
+        writer.write_all(&encoded)?;
+    }
+
+    assert_eq!(final_size as usize, size_of::<RawAcid>() + size_of::<RawFileSystemAccessControl>()
+        + sac_encoded_len(&npdm.service_access) + sac_encoded_len(&npdm.service_host)
+        + npdm.kernel_capabilities.iter().map(|v| v.encode().len() * 4).sum::<usize>(), "Serialized KAC has wrong size");
+
+    Ok(())
 }
 
 #[repr(C)]
@@ -329,7 +445,8 @@ impl NpdmJson {
 struct RawFileSystemAccessControl {
     version: u8,
     padding: [u8; 3],
-    permissions_bitmask: u64,
+    // Work around broken alignment. It sucks.
+    permissions_bitmask: [u8; 8],
     reserved: [u8; 0x20]
 }
 
@@ -338,7 +455,8 @@ struct RawFileSystemAccessControl {
 struct RawFileSystemAccessHeader {
     version: u8,
     padding: [u8; 3],
-    permissions_bitmask: u64,
+    // Work around broken alignment. It sucks.
+    permissions_bitmask: [u8; 8],
     data_size: u32, // Always 0x1C
     size_of_content_owner_id: u32,
     data_size_plus_content_owner_size: u32,
@@ -377,10 +495,12 @@ struct RawMeta {
 #[repr(C)]
 #[derive(Default, Clone, Copy, Serialize)]
 struct RawAcid {
-    /// RSA-2048 Signature starting from `rsa_nca_pubkey` and spanning
-    /// `signed_size` bytes, using a fixed key owned by Nintendo. The pubkey
-    /// part can be found in hactool, `acid_fixed_key_modulus`.
-    rsa_acid_sig: SigOrPubKey, // [u8; 0x100],
+    // RSA-2048 Signature starting from `rsa_nca_pubkey` and spanning
+    // `signed_size` bytes, using a fixed key owned by Nintendo. The pubkey
+    // part can be found in hactool, `acid_fixed_key_modulus`.
+    //
+    // Written separately.
+    // rsa_acid_sig: SigOrPubKey, // [u8; 0x100],
     /// RSA-2048 public key for the second NCA signature
     rsa_nca_pubkey: SigOrPubKey, // [u8; 0x100],
     /// Magic identifying a valid ACID. Should be `b"ACID"`.
@@ -420,4 +540,6 @@ struct RawAci {
     service_access_control_size: u32,
     kernel_access_control_offset: u32,
     kernel_access_control_size: u32,
+    #[doc(hidden)]
+    reserved38: u64
 }
