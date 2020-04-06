@@ -36,7 +36,7 @@ Creating a RomFs file:
 
     linkle romfs input_directory output.romfs
 
-Compiling and creating an NRO file (requires xargo from https://github.com/roblabla/xargo installed):
+Compiling and creating an NRO file (requires xargo, use `cargo install xargo` to install):
 
     cargo nro
 
