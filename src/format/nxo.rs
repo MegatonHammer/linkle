@@ -72,25 +72,25 @@ where
     Ok(())
 }
 
-fn write_mod0<T>(nxo_file: &NxoFile, output_writter: &mut T, bss_addr: u32, bss_size: u32) -> std::io::Result<()>
+fn write_mod0<T>(nxo_file: &NxoFile, offset: u32, output_writter: &mut T, bss_addr: u32, bss_size: u32) -> std::io::Result<()>
 where
     T: Write,
 {
     // MOD magic
     output_writter.write_all(b"MOD0")?;
     // Dynamic Offset
-    output_writter.write_u32::<LittleEndian>(nxo_file.dynamic_section.as_ref().map(|v| v.addr as u32).unwrap_or(0))?;
+    output_writter.write_u32::<LittleEndian>(nxo_file.dynamic_section.as_ref().map(|v| v.addr as u32 - offset).unwrap_or(0))?;
 
     // BSS Start Offset
-    output_writter.write_u32::<LittleEndian>(bss_addr)?;
+    output_writter.write_u32::<LittleEndian>(bss_addr - offset)?;
     // BSS End Offset
-    output_writter.write_u32::<LittleEndian>(bss_addr + bss_size)?;
+    output_writter.write_u32::<LittleEndian>(bss_addr + bss_size - offset)?;
 
     let (eh_frame_hdr_addr, eh_frame_hdr_size) = nxo_file.eh_frame_hdr_section.as_ref().map(|v| (v.addr, v.size)).unwrap_or((0, 0));
     // EH Frame Header Start
-    output_writter.write_u32::<LittleEndian>(eh_frame_hdr_addr as u32)?;
+    output_writter.write_u32::<LittleEndian>(eh_frame_hdr_addr as u32 - offset)?;
     // EH Frame Header End
-    output_writter.write_u32::<LittleEndian>(eh_frame_hdr_addr as u32 + eh_frame_hdr_size as u32)?;
+    output_writter.write_u32::<LittleEndian>(eh_frame_hdr_addr as u32 + eh_frame_hdr_size as u32 - offset)?;
 
     // RTLD ptr - written at runtime by RTLD
     output_writter.write_u32::<LittleEndian>(0)?;
@@ -300,26 +300,26 @@ impl NxoFile {
 
         if (0x80..code_size).contains(&(module_offset as u32)) && &code[module_offset..module_offset + 4] != b"MOD0" {
             output_writter.write_all(&code[0x80..module_offset])?;
-            write_mod0(self, output_writter, bss_start, bss_size)?;
-            output_writter.write_all(&code[module_offset + 0x18..])?;
+            write_mod0(self, module_offset as u32, output_writter, bss_start, bss_size)?;
+            output_writter.write_all(&code[module_offset + 0x1C..])?;
         } else {
             output_writter.write_all(&code[0x80..])?;
         }
 
-        if (rodata_offset..data_offset).contains(&(module_offset as u32)) && &rodata[module_offset - rodata_offset as usize..module_offset - rodata_offset as usize+ 4] == b"MOD0" {
-            let module_offset = module_offset - rodata_offset as usize;
-            output_writter.write_all(&rodata[..module_offset])?;
-            write_mod0(self, output_writter, bss_start, bss_size)?;
-            output_writter.write_all(&rodata[module_offset + 0x18..])?;
+        if (rodata_offset..data_offset).contains(&(module_offset as u32)) && &rodata[module_offset - rodata_offset as usize..module_offset - rodata_offset as usize+ 4] != b"MOD0" {
+            let rodata_module_offset = module_offset - rodata_offset as usize;
+            output_writter.write_all(&rodata[..rodata_module_offset])?;
+            write_mod0(self, module_offset as u32, output_writter, bss_start, bss_size)?;
+            output_writter.write_all(&rodata[rodata_module_offset + 0x1C..])?;
         } else {
             output_writter.write_all(&rodata)?;
         }
 
-        if (data_offset..file_offset).contains(&(module_offset as u32)) && &data[module_offset - data_offset as usize..module_offset - data_offset as usize + 4] == b"MOD0" {
-            let module_offset = module_offset - data_offset as usize;
-            output_writter.write_all(&data[..module_offset])?;
-            write_mod0(self, output_writter, bss_start, bss_size)?;
-            output_writter.write_all(&data[module_offset + 0x18..])?;
+        if (data_offset..file_offset).contains(&(module_offset as u32)) && &data[module_offset - data_offset as usize..module_offset - data_offset as usize + 4] != b"MOD0" {
+            let data_module_offset = module_offset - data_offset as usize;
+            output_writter.write_all(&data[..data_module_offset])?;
+            write_mod0(self, module_offset as u32, output_writter, bss_start, bss_size)?;
+            output_writter.write_all(&data[data_module_offset + 0x1C..])?;
         } else {
             output_writter.write_all(&data)?;
         }
