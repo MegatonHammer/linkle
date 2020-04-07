@@ -1,6 +1,6 @@
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use elf;
-use elf::types::{EM_ARM, EM_AARCH64, ProgramHeader, PT_LOAD, SHT_NOTE, Machine};
+use elf::types::{EM_ARM, EM_AARCH64, ProgramHeader, PT_LOAD, SHT_NOTE, Machine, SectionHeader};
 use crate::format::{utils, romfs::RomFs, nacp::NacpFile, npdm::KernelCapability};
 use std;
 use std::fs::File;
@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process;
 use serde_derive::{Serialize, Deserialize};
 use crate::format::utils::HexOrNum;
-use std::convert::TryFrom;
+use std::convert::{TryFrom, TryInto};
 
 // TODO: Support switchbrew's embedded files for NRO
 pub struct NxoFile {
@@ -19,6 +19,10 @@ pub struct NxoFile {
     rodata_segment: ProgramHeader,
     data_segment: ProgramHeader,
     bss_segment: Option<ProgramHeader>,
+    eh_frame_hdr_section: Option<SectionHeader>,
+    dynamic_section: Option<SectionHeader>,
+    dynstr_section: Option<SectionHeader>,
+    dynsym_section: Option<SectionHeader>,
     build_id: Option<Vec<u8>>,
 }
 
@@ -68,6 +72,32 @@ where
     Ok(())
 }
 
+fn write_mod0<T>(nxo_file: &NxoFile, output_writter: &mut T, bss_addr: u32, bss_size: u32) -> std::io::Result<()>
+where
+    T: Write,
+{
+    // MOD magic
+    output_writter.write_all(b"MOD0")?;
+    // Dynamic Offset
+    output_writter.write_u32::<LittleEndian>(nxo_file.dynamic_section.as_ref().map(|v| v.addr as u32).unwrap_or(0))?;
+
+    // BSS Start Offset
+    output_writter.write_u32::<LittleEndian>(bss_addr)?;
+    // BSS End Offset
+    output_writter.write_u32::<LittleEndian>(bss_addr + bss_size)?;
+
+    let (eh_frame_hdr_addr, eh_frame_hdr_size) = nxo_file.eh_frame_hdr_section.as_ref().map(|v| (v.addr, v.size)).unwrap_or((0, 0));
+    // EH Frame Header Start
+    output_writter.write_u32::<LittleEndian>(eh_frame_hdr_addr as u32)?;
+    // EH Frame Header End
+    output_writter.write_u32::<LittleEndian>(eh_frame_hdr_addr as u32 + eh_frame_hdr_size as u32)?;
+
+    // RTLD ptr - written at runtime by RTLD
+    output_writter.write_u32::<LittleEndian>(0)?;
+
+    Ok(())
+}
+
 impl NxoFile {
     pub fn from_elf(input: &str) -> std::io::Result<Self> {
         let path = PathBuf::from(input);
@@ -107,23 +137,33 @@ impl NxoFile {
             }
             None => None,
         };
-        let build_id = sections
-            .into_iter()
-            .filter(|&x| {
-                if x.shdr.shtype == SHT_NOTE {
-                    let mut data = Cursor::new(x.data.clone());
-                    // Ignore the two first offset of nhdr32
-                    data.seek(SeekFrom::Start(0x8)).unwrap();
-                    let n_type = data.read_u32::<LittleEndian>().unwrap();
 
-                    // BUILD_ID
-                    n_type == 0x3
-                } else {
-                    false
+        let mut build_id = None;
+        let mut dynamic_section = None;
+        let mut dynstr_section = None;
+        let mut dynsym_section = None;
+        let mut eh_frame_hdr_section = None;
+
+        for section in sections {
+            if section.shdr.shtype == SHT_NOTE {
+                let mut data = Cursor::new(section.data.clone());
+                // Ignore the two first offset of nhdr32
+                data.seek(SeekFrom::Start(0x8)).unwrap();
+                let n_type = data.read_u32::<LittleEndian>().unwrap();
+
+                // BUILD_ID
+                if n_type == 0x3 {
+                    build_id = Some(data.into_inner());
                 }
-            })
-            .map(|section| section.data.clone())
-            .next();
+            }
+            match &*section.shdr.name {
+                ".dynamic" => dynamic_section = Some(section.shdr.clone()),
+                ".dynstr" => dynstr_section = Some(section.shdr.clone()),
+                ".dynsym" => dynsym_section = Some(section.shdr.clone()),
+                ".eh_frame_hdr" => eh_frame_hdr_section = Some(section.shdr.clone()),
+                _ => ()
+            }
+        }
 
         Ok(NxoFile {
             file,
@@ -133,6 +173,10 @@ impl NxoFile {
             data_segment: *data_segment,
             bss_segment,
             build_id,
+            dynamic_section,
+            dynstr_section,
+            dynsym_section,
+            eh_frame_hdr_section
         })
     }
 
@@ -169,11 +213,11 @@ impl NxoFile {
 
         // NRO magic
         output_writter.write_all(b"NRO0")?;
-        // Unknown
+        // Version
         output_writter.write_u32::<LittleEndian>(0)?;
         // Total size
         output_writter.write_u32::<LittleEndian>(total_len)?;
-        // Unknown
+        // Flags
         output_writter.write_u32::<LittleEndian>(0)?;
 
         // Segment Header (3 entries)
@@ -186,19 +230,21 @@ impl NxoFile {
         file_offset += code_size;
 
         // .rodata segment
+        let rodata_offset = file_offset;
         let rodata_size = rodata.len() as u32;
         output_writter.write_u32::<LittleEndian>(file_offset)?;
         output_writter.write_u32::<LittleEndian>(rodata_size)?;
         file_offset += rodata_size;
 
         // .data segment
+        let data_offset = file_offset;
         let data_size = data.len() as u32;
         output_writter.write_u32::<LittleEndian>(file_offset)?;
         output_writter.write_u32::<LittleEndian>(data_size)?;
         file_offset += data_size;
 
         // BSS size
-        match self.bss_segment {
+        let (bss_start, bss_size) = match self.bss_segment {
             Some(segment) => {
                 if segment.vaddr != u64::from(file_offset) {
                     println!(
@@ -207,6 +253,7 @@ impl NxoFile {
                 }
                 output_writter
                     .write_u32::<LittleEndian>(((segment.memsz + 0xFFF) & !0xFFF) as u32)?;
+                (segment.vaddr as u32, ((segment.memsz + 0xFFF) & !0xFFF) as u32)
             }
             _ => {
                 // in this case the bss is missing or is embedeed in .data. libnx does that, let's support it
@@ -217,24 +264,65 @@ impl NxoFile {
                     0
                 };
                 output_writter.write_u32::<LittleEndian>(bss_size)?;
+                (data_segment.vaddr as u32 + data_segment.memsz as u32, bss_size)
             }
-        }
-        // Unknown
+        };
+
+        // Reserved
         output_writter.write_u32::<LittleEndian>(0)?;
 
         write_build_id(&self.build_id, output_writter)?;
 
-        // Padding
-        output_writter.write_u64::<LittleEndian>(0)?;
+        // TODO: DSO Module Offset (unused)
+        output_writter.write_u32::<LittleEndian>(0)?;
+        // Reserved (unused)
+        output_writter.write_u32::<LittleEndian>(0)?;
+
+        // TODO: apiInfo
         output_writter.write_u64::<LittleEndian>(0)?;
 
-        // Unknown
-        output_writter.write_u64::<LittleEndian>(0)?;
-        output_writter.write_u64::<LittleEndian>(0)?;
+        // .dynstr section info
+        output_writter.write_u32::<LittleEndian>(self.dynstr_section.as_ref().map(|v| u32::try_from(v.addr).unwrap()).unwrap_or(0))?;
+        output_writter.write_u32::<LittleEndian>(self.dynstr_section.as_ref().map(|v| u32::try_from(v.size).unwrap()).unwrap_or(0))?;
 
-        output_writter.write_all(&code[0x80..])?;
-        output_writter.write_all(&rodata)?;
-        output_writter.write_all(&data)?;
+        // .dynsym section info
+        output_writter.write_u32::<LittleEndian>(self.dynsym_section.as_ref().map(|v| u32::try_from(v.addr).unwrap()).unwrap_or(0))?;
+        output_writter.write_u32::<LittleEndian>(self.dynsym_section.as_ref().map(|v| u32::try_from(v.size).unwrap()).unwrap_or(0))?;
+
+        let module_offset = u32::from_le_bytes(code[4..8].try_into().unwrap()) as usize;
+        if module_offset != 0 && !(
+            (0x80..code_size).contains(&(module_offset as u32)) ||
+            (rodata_offset..data_offset).contains(&(module_offset as u32)) ||
+            (data_offset..file_offset).contains(&(module_offset as u32)))
+        {
+            panic!("Invalid module offset {}", module_offset)
+        }
+
+        if (0x80..code_size).contains(&(module_offset as u32)) && &code[module_offset..module_offset + 4] != b"MOD0" {
+            output_writter.write_all(&code[0x80..module_offset])?;
+            write_mod0(self, output_writter, bss_start, bss_size)?;
+            output_writter.write_all(&code[module_offset + 0x18..])?;
+        } else {
+            output_writter.write_all(&code[0x80..])?;
+        }
+
+        if (rodata_offset..data_offset).contains(&(module_offset as u32)) && &rodata[module_offset - rodata_offset as usize..module_offset - rodata_offset as usize+ 4] == b"MOD0" {
+            let module_offset = module_offset - rodata_offset as usize;
+            output_writter.write_all(&rodata[..module_offset])?;
+            write_mod0(self, output_writter, bss_start, bss_size)?;
+            output_writter.write_all(&rodata[module_offset + 0x18..])?;
+        } else {
+            output_writter.write_all(&rodata)?;
+        }
+
+        if (data_offset..file_offset).contains(&(module_offset as u32)) && &data[module_offset - data_offset as usize..module_offset - data_offset as usize + 4] == b"MOD0" {
+            let module_offset = module_offset - data_offset as usize;
+            output_writter.write_all(&data[..module_offset])?;
+            write_mod0(self, output_writter, bss_start, bss_size)?;
+            output_writter.write_all(&data[module_offset + 0x18..])?;
+        } else {
+            output_writter.write_all(&data)?;
+        }
 
         // Early return if there's no need for an ASET segment.
         if let (None, None, None) = (&icon, &romfs, &nacp) {
@@ -321,9 +409,9 @@ impl NxoFile {
 
         // NSO magic
         output_writter.write_all(b"NSO0")?;
-        // Unknown
+        // Version
         output_writter.write_u32::<LittleEndian>(0)?;
-        // Unknown
+        // Reserved
         output_writter.write_u32::<LittleEndian>(0)?;
 
         // Flags, set compression + sum check
@@ -340,7 +428,7 @@ impl NxoFile {
         output_writter.write_u32::<LittleEndian>(text_segment.vaddr as u32)?;
         output_writter.write_u32::<LittleEndian>(code_size as u32)?;
 
-        // Module offset (TODO: SUPPORT THAT)
+        // TODO: Module Name Offset
         output_writter.write_u32::<LittleEndian>(0)?;
 
         file_offset += compressed_code_size;
@@ -353,7 +441,7 @@ impl NxoFile {
         output_writter.write_u32::<LittleEndian>(rodata_segment.vaddr as u32)?;
         output_writter.write_u32::<LittleEndian>(rodata_size as u32)?;
 
-        // Module file size (TODO: SUPPORT THAT)
+        // TODO: Module Name Size
         output_writter.write_u32::<LittleEndian>(0)?;
 
         file_offset += compressed_rodata_size;
@@ -394,16 +482,20 @@ impl NxoFile {
         output_writter.write_u32::<LittleEndian>(compressed_rodata_size)?;
         output_writter.write_u32::<LittleEndian>(compressed_data_size)?;
 
-        // Padding (0x24)
-        output_writter.write_u64::<LittleEndian>(0)?;
-        output_writter.write_u64::<LittleEndian>(0)?;
-        output_writter.write_u64::<LittleEndian>(0)?;
-        output_writter.write_u64::<LittleEndian>(0)?;
+        // Reserved (0x1C)
         output_writter.write_u32::<LittleEndian>(0)?;
+        output_writter.write_u64::<LittleEndian>(0)?;
+        output_writter.write_u64::<LittleEndian>(0)?;
+        output_writter.write_u64::<LittleEndian>(0)?;
 
-        // Unknown
+        // TODO: SegmentHeaderRelative for .api_info
         output_writter.write_u64::<LittleEndian>(0)?;
-        output_writter.write_u64::<LittleEndian>(0)?;
+        // SegmentHeaderRelative for .dynstr
+        output_writter.write_u32::<LittleEndian>(self.dynstr_section.as_ref().map(|v| u32::try_from(v.addr).unwrap()).unwrap_or(0))?;
+        output_writter.write_u32::<LittleEndian>(self.dynstr_section.as_ref().map(|v| u32::try_from(v.size).unwrap()).unwrap_or(0))?;
+        // SegmentHeaderRelative for .dynsym
+        output_writter.write_u32::<LittleEndian>(self.dynsym_section.as_ref().map(|v| u32::try_from(v.addr).unwrap()).unwrap_or(0))?;
+        output_writter.write_u32::<LittleEndian>(self.dynsym_section.as_ref().map(|v| u32::try_from(v.size).unwrap()).unwrap_or(0))?;
 
         // .text sha256
         let text_sum = utils::calculate_sha256(&code)?;
@@ -501,9 +593,9 @@ impl NxoFile {
         output_writer.write_all(&vec![0xFF; (0x20 - caps.len()) * 4])?;
 
         // Section data
-        output_writer.write_all(&text_data);
-        output_writer.write_all(&rodata_data);
-        output_writer.write_all(&data_data);
+        output_writer.write_all(&text_data)?;
+        output_writer.write_all(&rodata_data)?;
+        output_writer.write_all(&data_data)?;
 
         Ok(())
     }
