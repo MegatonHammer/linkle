@@ -15,10 +15,10 @@ use std::convert::TryFrom;
 pub struct NxoFile {
     file: File,
     machine: Machine,
-    text_section: ProgramHeader,
-    rodata_section: ProgramHeader,
-    data_section: ProgramHeader,
-    bss_section: Option<ProgramHeader>,
+    text_segment: ProgramHeader,
+    rodata_segment: ProgramHeader,
+    data_segment: ProgramHeader,
+    bss_segment: Option<ProgramHeader>,
     build_id: Option<Vec<u8>>,
 }
 
@@ -34,13 +34,13 @@ pub struct KipNpdm {
     kernel_capabilities: Vec<KernelCapability>,
 }
 
-fn pad_segment(previous_segment_data: &mut Vec<u8>, offset: usize, section: &ProgramHeader) {
-    let section_vaddr = section.vaddr as usize;
-    let section_supposed_start = previous_segment_data.len() + offset;
+fn pad_segment(previous_segment_data: &mut Vec<u8>, offset: usize, segment: &ProgramHeader) {
+    let segment_vaddr = segment.vaddr as usize;
+    let segment_supposed_start = previous_segment_data.len() + offset;
 
-    if section_vaddr > section_supposed_start {
+    if segment_vaddr > segment_supposed_start {
         let real_size = previous_segment_data.len();
-        previous_segment_data.resize(real_size + (section_vaddr - section_supposed_start), 0);
+        previous_segment_data.resize(real_size + (segment_vaddr - segment_supposed_start), 0);
     }
 }
 
@@ -82,22 +82,22 @@ impl NxoFile {
 
         let sections = &elf_file.sections;
         let phdrs: Vec<ProgramHeader> = elf_file.phdrs.to_vec();
-        let text_section = phdrs.get(0).unwrap_or_else(|| {
+        let text_segment = phdrs.get(0).unwrap_or_else(|| {
             println!("Error: .text not found in ELF file");
             process::exit(1)
         });
 
-        let rodata_section = phdrs.get(1).unwrap_or_else(|| {
+        let rodata_segment = phdrs.get(1).unwrap_or_else(|| {
             println!("Error: .rodata not found in ELF file");
             process::exit(1)
         });
 
-        let data_section = phdrs.get(2).unwrap_or_else(|| {
+        let data_segment = phdrs.get(2).unwrap_or_else(|| {
             println!("Error: .data not found in ELF file");
             process::exit(1)
         });
 
-        let bss_section = match phdrs.get(3) {
+        let bss_segment = match phdrs.get(3) {
             Some(s) => {
                 if s.progtype == PT_LOAD {
                     Some(*s)
@@ -128,10 +128,10 @@ impl NxoFile {
         Ok(NxoFile {
             file,
             machine: elf_file.ehdr.machine,
-            text_section: *text_section,
-            rodata_section: *rodata_section,
-            data_section: *data_section,
-            bss_section,
+            text_segment: *text_segment,
+            rodata_segment: *rodata_segment,
+            data_segment: *data_segment,
+            bss_segment,
             build_id,
         })
     }
@@ -140,14 +140,14 @@ impl NxoFile {
     where
         T: Write,
     {
-        let text_section = &self.text_section;
-        let rodata_section = &self.rodata_section;
-        let data_section = &self.data_section;
+        let text_segment = &self.text_segment;
+        let rodata_segment = &self.rodata_segment;
+        let data_segment = &self.data_segment;
 
         // Get segments data
-        let mut code = utils::get_section_data(&mut self.file, text_section)?;
-        let mut rodata = utils::get_section_data(&mut self.file, rodata_section)?;
-        let mut data = utils::get_section_data(&mut self.file, data_section)?;
+        let mut code = utils::get_segment_data(&mut self.file, text_segment)?;
+        let mut rodata = utils::get_segment_data(&mut self.file, rodata_segment)?;
+        let mut data = utils::get_segment_data(&mut self.file, data_segment)?;
 
         // First correctly align to be conform to the NRO standard
         utils::add_padding(&mut code, 0xFFF);
@@ -155,11 +155,11 @@ impl NxoFile {
         utils::add_padding(&mut data, 0xFFF);
 
         // Finally fix possible misalign of  vaddr because NRO only have one base
-        pad_segment(&mut code, 0, rodata_section);
-        pad_segment(&mut rodata, code.len(), data_section);
+        pad_segment(&mut code, 0, rodata_segment);
+        pad_segment(&mut rodata, code.len(), data_segment);
 
-        if let Some(section) = self.bss_section {
-            pad_segment(&mut data, code.len() + rodata.len(), &section);
+        if let Some(segment) = self.bss_segment {
+            pad_segment(&mut data, code.len() + rodata.len(), &segment);
         }
 
         let total_len: u32 = (code.len() + rodata.len() + data.len()) as u32;
@@ -198,21 +198,21 @@ impl NxoFile {
         file_offset += data_size;
 
         // BSS size
-        match self.bss_section {
-            Some(section) => {
-                if section.vaddr != u64::from(file_offset) {
+        match self.bss_segment {
+            Some(segment) => {
+                if segment.vaddr != u64::from(file_offset) {
                     println!(
                     "Warning: possible misalign bss\n.bss addr: 0x{:x}\nexpected offset: 0x{:x}",
-                    section.vaddr, file_offset);
+                    segment.vaddr, file_offset);
                 }
                 output_writter
-                    .write_u32::<LittleEndian>(((section.memsz + 0xFFF) & !0xFFF) as u32)?;
+                    .write_u32::<LittleEndian>(((segment.memsz + 0xFFF) & !0xFFF) as u32)?;
             }
             _ => {
                 // in this case the bss is missing or is embedeed in .data. libnx does that, let's support it
-                let data_section_size = (data_section.filesz + 0xFFF) & !0xFFF;
-                let bss_size = if data_section.memsz > data_section_size {
-                    (((data_section.memsz - data_section_size) + 0xFFF) & !0xFFF) as u32
+                let data_segment_size = (data_segment.filesz + 0xFFF) & !0xFFF;
+                let bss_size = if data_segment.memsz > data_segment_size {
+                    (((data_segment.memsz - data_segment_size) + 0xFFF) & !0xFFF) as u32
                 } else {
                     0
                 };
@@ -236,7 +236,7 @@ impl NxoFile {
         output_writter.write_all(&rodata)?;
         output_writter.write_all(&data)?;
 
-        // Early return if there's no need for an ASET section.
+        // Early return if there's no need for an ASET segment.
         if let (None, None, None) = (&icon, &romfs, &nacp) {
             return Ok(())
         }
@@ -301,13 +301,13 @@ impl NxoFile {
     where
         T: Write,
     {
-        let text_section = &self.text_section;
-        let rodata_section = &self.rodata_section;
-        let data_section = &self.data_section;
+        let text_segment = &self.text_segment;
+        let rodata_segment = &self.rodata_segment;
+        let data_segment = &self.data_segment;
 
-        let mut code = utils::get_section_data(&mut self.file, text_section)?;
-        let mut rodata = utils::get_section_data(&mut self.file, rodata_section)?;
-        let mut data = utils::get_section_data(&mut self.file, data_section)?;
+        let mut code = utils::get_segment_data(&mut self.file, text_segment)?;
+        let mut rodata = utils::get_segment_data(&mut self.file, rodata_segment)?;
+        let mut data = utils::get_segment_data(&mut self.file, data_segment)?;
 
         // First correctly align to avoid possible compression issues
         utils::add_padding(&mut code, 0xFFF);
@@ -315,8 +315,8 @@ impl NxoFile {
         utils::add_padding(&mut data, 0xFFF);
 
         // Because bss doesn't have it's own segment in NSO, we need to pad .data to the .bss vaddr
-        if let Some(section) = self.bss_section {
-            pad_segment(&mut data, data_section.vaddr as usize, &section);
+        if let Some(segment) = self.bss_segment {
+            pad_segment(&mut data, data_segment.vaddr as usize, &segment);
         }
 
         // NSO magic
@@ -337,7 +337,7 @@ impl NxoFile {
         let compressed_code = utils::compress_lz4(&mut code)?;
         let compressed_code_size = compressed_code.len() as u32;
         output_writter.write_u32::<LittleEndian>(file_offset as u32)?;
-        output_writter.write_u32::<LittleEndian>(text_section.vaddr as u32)?;
+        output_writter.write_u32::<LittleEndian>(text_segment.vaddr as u32)?;
         output_writter.write_u32::<LittleEndian>(code_size as u32)?;
 
         // Module offset (TODO: SUPPORT THAT)
@@ -350,7 +350,7 @@ impl NxoFile {
         let compressed_rodata = utils::compress_lz4(&mut rodata)?;
         let compressed_rodata_size = compressed_rodata.len() as u32;
         output_writter.write_u32::<LittleEndian>(file_offset as u32)?;
-        output_writter.write_u32::<LittleEndian>(rodata_section.vaddr as u32)?;
+        output_writter.write_u32::<LittleEndian>(rodata_segment.vaddr as u32)?;
         output_writter.write_u32::<LittleEndian>(rodata_size as u32)?;
 
         // Module file size (TODO: SUPPORT THAT)
@@ -364,26 +364,26 @@ impl NxoFile {
         let compressed_data_size = compressed_data.len() as u32;
         let uncompressed_data_size = data.len() as u64;
         output_writter.write_u32::<LittleEndian>(file_offset as u32)?;
-        output_writter.write_u32::<LittleEndian>(data_section.vaddr as u32)?;
+        output_writter.write_u32::<LittleEndian>(data_segment.vaddr as u32)?;
         output_writter.write_u32::<LittleEndian>(data_size as u32)?;
 
         // BSS size
-        match self.bss_section {
-            Some(section) => {
-                let memory_offset = data_section.vaddr + uncompressed_data_size;
-                if section.vaddr != memory_offset {
+        match self.bss_segment {
+            Some(segment) => {
+                let memory_offset = data_segment.vaddr + uncompressed_data_size;
+                if segment.vaddr != memory_offset {
                     println!(
                     "Warning: possible misalign bss\n.bss addr: 0x{:x}\nexpected offset: 0x{:x}",
-                    section.vaddr, memory_offset);
+                    segment.vaddr, memory_offset);
                 }
                 // (bss_segment['p_memsz'] + 0xFFF) & ~0xFFF
                 output_writter
-                    .write_u32::<LittleEndian>(((section.memsz + 0xFFF) & !0xFFF) as u32)?;
+                    .write_u32::<LittleEndian>(((segment.memsz + 0xFFF) & !0xFFF) as u32)?;
             }
             _ => {
                 // in this case the bss is missing or is embedeed in .data. libnx does that, let's support it
                 output_writter
-                    .write_u32::<LittleEndian>((data_section.memsz - data_section.filesz) as u32)?;
+                    .write_u32::<LittleEndian>((data_segment.memsz - data_segment.filesz) as u32)?;
             }
         }
 
@@ -449,29 +449,29 @@ impl NxoFile {
             unimplemented!("Unknown machine type");
         }
 
-        let mut section_data = utils::get_section_data(&mut self.file, &self.text_section)?;
-        let text_data = utils::compress_blz(&mut section_data).unwrap();
-        let mut section_data = utils::get_section_data(&mut self.file, &self.rodata_section)?;
-        let rodata_data = utils::compress_blz(&mut section_data).unwrap();
-        let mut section_data = utils::get_section_data(&mut self.file, &self.data_section)?;
-        let data_data = utils::compress_blz(&mut section_data).unwrap();
+        let mut segment_data = utils::get_segment_data(&mut self.file, &self.text_segment)?;
+        let text_data = utils::compress_blz(&mut segment_data).unwrap();
+        let mut segment_data = utils::get_segment_data(&mut self.file, &self.rodata_segment)?;
+        let rodata_data = utils::compress_blz(&mut segment_data).unwrap();
+        let mut segment_data = utils::get_segment_data(&mut self.file, &self.data_segment)?;
+        let data_data = utils::compress_blz(&mut segment_data).unwrap();
 
-        write_kip_section_header(output_writer, &self.text_section, 0, text_data.len() as u32)?;
-        write_kip_section_header(output_writer, &self.rodata_section, u32::try_from(npdm.main_thread_stack_size.0).expect("Exected main_thread_stack_size to be an u32"), rodata_data.len() as u32)?;
-        write_kip_section_header(output_writer, &self.data_section, 0, data_data.len() as u32)?;
+        write_kip_segment_header(output_writer, &self.text_segment, 0, text_data.len() as u32)?;
+        write_kip_segment_header(output_writer, &self.rodata_segment, u32::try_from(npdm.main_thread_stack_size.0).expect("Exected main_thread_stack_size to be an u32"), rodata_data.len() as u32)?;
+        write_kip_segment_header(output_writer, &self.data_segment, 0, data_data.len() as u32)?;
 
-        if let Some(section) = self.bss_section {
-            output_writer.write_u32::<LittleEndian>(u32::try_from(section.vaddr).expect("BSS vaddr too big"))?;
-            output_writer.write_u32::<LittleEndian>(u32::try_from(section.memsz).expect("BSS memsize too big"))?;
+        if let Some(segment) = self.bss_segment {
+            output_writer.write_u32::<LittleEndian>(u32::try_from(segment.vaddr).expect("BSS vaddr too big"))?;
+            output_writer.write_u32::<LittleEndian>(u32::try_from(segment.memsz).expect("BSS memsize too big"))?;
         } else {
             // in this case the bss is missing or is embedeed in .data. libnx does that, let's support it
-            let data_section_size = (self.data_section.filesz + 0xFFF) & !0xFFF;
-            let bss_size = if self.data_section.memsz > data_section_size {
-                (((self.data_section.memsz - data_section_size) + 0xFFF) & !0xFFF) as u32
+            let data_segment_size = (self.data_segment.filesz + 0xFFF) & !0xFFF;
+            let bss_size = if self.data_segment.memsz > data_segment_size {
+                (((self.data_segment.memsz - data_segment_size) + 0xFFF) & !0xFFF) as u32
             } else {
                 0
             };
-            output_writer.write_u32::<LittleEndian>(u32::try_from(self.data_section.vaddr + data_section_size).unwrap())?;
+            output_writer.write_u32::<LittleEndian>(u32::try_from(self.data_segment.vaddr + data_segment_size).unwrap())?;
             output_writer.write_u32::<LittleEndian>(bss_size)?;
         }
         output_writer.write_u32::<LittleEndian>(0)?;
@@ -509,12 +509,12 @@ impl NxoFile {
     }
 }
 
-pub fn write_kip_section_header<T>(output_writer: &mut T, section: &ProgramHeader, attributes: u32, compressed_size: u32) -> std::io::Result<()>
+pub fn write_kip_segment_header<T>(output_writer: &mut T, segment: &ProgramHeader, attributes: u32, compressed_size: u32) -> std::io::Result<()>
 where
     T: Write,
 {
-    output_writer.write_u32::<LittleEndian>(u32::try_from(section.vaddr).expect("vaddr too big"))?;
-    output_writer.write_u32::<LittleEndian>(u32::try_from(section.filesz).expect("memsz too big"))?;
+    output_writer.write_u32::<LittleEndian>(u32::try_from(segment.vaddr).expect("vaddr too big"))?;
+    output_writer.write_u32::<LittleEndian>(u32::try_from(segment.filesz).expect("memsz too big"))?;
     output_writer.write_u32::<LittleEndian>(u32::try_from(compressed_size).expect("Compressed size too big"))?;
     output_writer.write_u32::<LittleEndian>(attributes)?;
 

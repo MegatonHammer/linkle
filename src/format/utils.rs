@@ -24,7 +24,7 @@ pub fn check_string_or_truncate(string: &mut String, name: &str, size: usize) {
     }
 }
 
-pub fn get_section_data(
+pub fn get_segment_data(
     file: &mut File,
     header: &elf::types::ProgramHeader,
 ) -> std::io::Result<Vec<u8>> {
