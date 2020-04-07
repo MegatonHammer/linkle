@@ -44,7 +44,8 @@ bit_field = "0.10.0"
 bincode = "1.1.4"
 yasna = { version = "0.3", features = ["num-bigint"] }
 pem = "0.6"
-rsa = { path = "../RSA" }
+rand = "0.7"
+rsa = { git = "https://github.com/RustCrypto/RSA", rev = "11500ed" }
 hex = "0.3"
 
 [features]

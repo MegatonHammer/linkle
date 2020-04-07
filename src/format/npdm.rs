@@ -255,7 +255,7 @@ impl NpdmJson {
                 write_acid(&mut hash, self, &meta)?;
                 let hash = hash.result();
                 println!("Signing over {:02x?}", hash);
-                let sig = pkey.sign(rsa::PaddingScheme::PSS, Some(&rsa::hash::Hashes::SHA2_256), &hash)?;
+                let sig = pkey.sign(rsa::PaddingScheme::new_pss::<sha2::Sha256, _>(rand::thread_rng()), &hash)?;
                 assert_eq!(sig.len(), 0x100, "Signature of wrong length generated");
                 file.write_all(&sig)?;
 
