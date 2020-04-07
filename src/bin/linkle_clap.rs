@@ -134,7 +134,7 @@ fn create_kip(input_file: &str, npdm_file: &str, output_file: &str) -> Result<()
     let mut option = OpenOptions::new();
     let output_option = option.write(true).create(true).truncate(true);
     output_option.open(output_file)?;
-    
+
     nxo.write_kip1(&mut output_option.open(output_file).map_err(|err| (err, output_file))?, &npdm).map_err(|err| (err, output_file))?;
     Ok(())
 }
@@ -187,7 +187,11 @@ fn create_romfs(input_directory: &Path, output_file: &Path) -> Result<(), linkle
 }
 
 fn print_keys(is_dev: bool, key_path: Option<&Path>) -> Result<(), linkle::error::Error> {
-    let keys = linkle::pki::Keys::new_retail(key_path).unwrap();
+    let keys = if is_dev {
+        linkle::pki::Keys::new_retail(key_path).unwrap()
+    } else {
+        linkle::pki::Keys::new_dev(key_path).unwrap()
+    };
 
     keys.write(&mut std::io::stdout()).unwrap();
     Ok(())
