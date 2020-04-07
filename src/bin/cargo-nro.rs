@@ -252,7 +252,7 @@ fn main() {
     let iter = cargo_metadata::parse_message_stream(command.stdout.unwrap());
     for message in iter {
         match message {
-            Ok(Message::CompilerArtifact(ref artifact)) if artifact.target.kind[0] == "bin" => {
+            Ok(Message::CompilerArtifact(ref artifact)) if artifact.target.kind.contains("bin") || artifact.target.kind.contains("cdylib") => {
                 // Find the artifact's source. This is not going to be pretty.
                 // For whatever reason, cargo thought it'd be a *great idea* to make file URLs use
                 // the non-standard "path+file:///" scheme, instead of, y'know, the ""file:///" everyone
