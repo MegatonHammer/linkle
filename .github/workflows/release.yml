@@ -30,7 +30,7 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: build
-          args: --target ${{ matrix.target }} --release
+          args: --target ${{ matrix.target }} --release --features=binaries
       - name: Create release zip
         run: |
           zip --junk-paths linkle.zip target/${{ matrix.target }}/release/${{ matrix.binary }}
