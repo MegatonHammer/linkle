@@ -59,9 +59,9 @@ jobs:
           command: build
           args: --target ${{ matrix.target }} --release --features=binaries
       - name: Create release zip
-        shell: bash
+        shell: pwsh
         run: |
-          zip --junk-paths linkle.zip target/${{ matrix.target }}/release/${{ matrix.binary }}
+          compress-archive -path 'target/${{ matrix.target }}/release/${{ matrix.binary }}' -destinationpath 'linkle.zip' -compressionlevel fastest
       - name: Load Release URL File from release job
         uses: actions/download-artifact@v1
         with:
