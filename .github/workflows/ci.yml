@@ -35,7 +35,7 @@ jobs:
         with:
           profile: minimal
       - name: Install Musl
-        if: contains(matrix.target, 'musl') && os == 'ubuntu-latest'
+        if: contains(matrix.target, 'musl') && matrix.os == 'ubuntu-latest'
         run: sudo apt-get install -y musl musl-tools
       - uses: actions-rs/cargo@v1
         with:
