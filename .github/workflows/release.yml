@@ -55,6 +55,9 @@ jobs:
         with:
           command: build
           args: --target ${{ matrix.target }} --release --features=binaries
+      - name: Install Musl
+        if: contains(matrix.target, "musl") && os == "ubuntu-latest"
+        run: sudo apt-get install -y musl musl-tools
       - name: Create release zip
         shell: bash
         run: |
