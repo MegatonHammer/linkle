@@ -85,7 +85,7 @@ impl<'de> Deserialize<'de> for HexOrNum {
             where
                 E: serde::de::Error
             {
-                if (v.starts_with("0x")) {
+                if v.starts_with("0x") {
                     u64::from_str_radix(&v[2..], 16).map_err(|_| {
                         E::invalid_value(Unexpected::Str(v), &"a hex-encoded string")
                     })

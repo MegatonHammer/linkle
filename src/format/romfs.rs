@@ -291,9 +291,9 @@ impl RomFs {
                     ctx.file_table_size += mem::size_of::<RomFsFileEntryHdr>() as u64 + align64(file.borrow().name.len() as u64, 4);
 
                 } else if file_type.is_symlink() {
-                    Err(Error::RomFsSymlink(entry.path(), Backtrace::new()))?;
+                    return Err(Error::RomFsSymlink(entry.path(), Backtrace::new()));
                 } else {
-                    Err(Error::RomFsFiletype(entry.path(), Backtrace::new()))?;
+                    return Err(Error::RomFsFiletype(entry.path(), Backtrace::new()));
                 }
             }
             parent_dir.borrow_mut().child.sort_by_key(|v| v.borrow().name.clone());

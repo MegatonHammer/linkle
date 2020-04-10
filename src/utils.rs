@@ -32,12 +32,13 @@ impl<R> ReadRange<R> {
     pub fn new(stream: R, start_from: u64, max_size: u64) -> ReadRange<R> {
         ReadRange {
             inner: stream,
-            start_from: start_from,
+            start_from,
             size: max_size,
             inner_pos: 0
         }
     }
 
+    #[allow(unused)]
     pub fn pos_in_stream(&self) -> u64 {
         self.start_from + self.inner_pos
     }

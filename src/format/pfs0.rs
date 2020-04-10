@@ -15,7 +15,7 @@ impl<T: Read + Seek> ReadSeek for T {}
 enum Pfs0Meta {
     HostPath(PathBuf),
     SubFile {
-        file: Box<ReadSeek>,
+        file: Box<dyn ReadSeek>,
         name: String,
         size: u64
     }
@@ -67,7 +67,7 @@ impl Pfs0 {
         let string_table_offset = 0x10 + filecount as u64 * 0x18;
         let data_offset = string_table_offset + string_table_size as u64;
 
-        for file in 0..filecount {
+        for _ in 0..filecount {
             let offset = data_offset + f.read_u64::<LittleEndian>()?;
             let size = f.read_u64::<LittleEndian>()?;
             let filename_offset = string_table_offset + f.read_u32::<LittleEndian>()? as u64;
@@ -168,7 +168,7 @@ impl Pfs0 {
             output_writter
                 .seek(SeekFrom::Start(data_pos + data_offset))?;
 
-            file.seek(SeekFrom::Start(0));
+            file.seek(SeekFrom::Start(0))?;
             let size = io::copy(file, output_writter)?;
             assert_eq!(size, file_size);
 

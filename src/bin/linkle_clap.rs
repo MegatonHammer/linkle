@@ -156,7 +156,7 @@ fn extract_pfs0(input_path: &str, output_directory: &str) -> Result<(), linkle::
     match std::fs::create_dir(path) {
         Ok(()) => (),
         Err(ref err) if err.kind() == std::io::ErrorKind::AlreadyExists => (),
-        Err(err) => Err((err, path))?
+        Err(err) => return Err((err, path).into())
     }
     for file in pfs0.files() {
         let mut file = file?;

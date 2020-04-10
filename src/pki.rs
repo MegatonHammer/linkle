@@ -47,7 +47,7 @@ impl_debug!(Keyblob);
 impl_debug!(Modulus);
 
 impl Keyblob {
-    fn encrypt(&self, key: &Aes128Key, mac_key: &Aes128Key, keyblob_id: usize) -> Result<EncryptedKeyblob, Error> {
+    fn encrypt(&self, key: &Aes128Key, mac_key: &Aes128Key, _keyblob_id: usize) -> Result<EncryptedKeyblob, Error> {
         let mut encrypted_keyblob = [0; 0xB0];
         encrypted_keyblob[0x20..].copy_from_slice(&self.0);
 
@@ -349,7 +349,7 @@ impl Keys {
         }
 
         if !succeed {
-            Err(io::Error::new(ErrorKind::NotFound, "Keyfile not found."))?;
+            return Err(io::Error::new(ErrorKind::NotFound, "Keyfile not found.").into());
         }
 
         keys.derive_keys()?;
@@ -542,6 +542,7 @@ impl Keys {
         ))
     }
 
+    #[allow(clippy::cognitive_complexity)]
     fn read_from_ini(&mut self, mut file: File) -> Result<(), Error> {
         let config = ini::Ini::read_from(&mut file)?;
         let section = config.general_section();
@@ -586,6 +587,7 @@ impl Keys {
         Ok(())
     }
 
+    #[allow(clippy::cognitive_complexity)]
     pub fn write<W: Write>(&self, w: &mut W) -> io::Result<()> {
         make_key_macros_write!(self, w);
         single_key!(secure_boot_key);

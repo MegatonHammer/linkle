@@ -533,10 +533,10 @@ impl NxoFile {
             output_writer.write_u8(flags)?;
         } else if self.machine == EM_AARCH64 {
             // Compression enable, Is64Bit, IsAddrSpace32Bit, UseSystemPoolPartition
-            output_writer.write_u8(0b00111111)?;
+            output_writer.write_u8(0b0011_1111)?;
         } else if self.machine == EM_ARM {
             // Compression enable, UseSystemPoolPartition
-            output_writer.write_u8(0b00100111)?;
+            output_writer.write_u8(0b0010_0111)?;
         } else {
             unimplemented!("Unknown machine type");
         }
@@ -570,7 +570,7 @@ impl NxoFile {
         output_writer.write_u32::<LittleEndian>(0)?;
 
         // Empty Sections:
-        for i in 4..6 {
+        for _ in 4..6 {
             output_writer.write_u32::<LittleEndian>(0)?;
             output_writer.write_u32::<LittleEndian>(0)?;
             output_writer.write_u32::<LittleEndian>(0)?;
