@@ -9,6 +9,7 @@ extern crate serde_derive;
 extern crate cargo_metadata;
 extern crate goblin;
 extern crate scroll;
+extern crate cargo;
 
 use scroll::IOwrite;
 use std::env::{self, VarError};
@@ -101,6 +102,7 @@ fn get_metadata(
     target_name: &str,
 ) -> (Package, PackageMetadata) {
     let metadata = cargo_metadata::metadata(Some(&manifest_path)).unwrap();
+
     let package = metadata
         .packages
         .into_iter()
@@ -283,10 +285,14 @@ fn main() {
 
     let mut command = Command::new("xargo");
 
+    let config = cargo::util::config::Config::default().unwrap();
+    let target: Option<String> = config.get("build.target").unwrap();
+    let target = target.as_deref().unwrap_or("aarch64-roblabla-switch");
+
     command
         .args(&[
             "build",
-            "--target=aarch64-roblabla-switch",
+            &format!("--target={}", target),
             "--message-format=json",
         ])
         .stdout(Stdio::piped())
