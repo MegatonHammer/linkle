@@ -1,10 +1,10 @@
-use byteorder::{LittleEndian, WriteBytesExt};
 use crate::format::utils;
+use byteorder::{LittleEndian, WriteBytesExt};
+use serde_derive::{Deserialize, Serialize};
+use serde_json;
 use std;
 use std::fs::File;
 use std::io::Write;
-use serde_derive::{Serialize, Deserialize};
-use serde_json;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct NacpLangEntry {
@@ -99,7 +99,10 @@ impl NacpFile {
             .clone()
             .unwrap_or_else(|| "Unknown Application".to_string());
         let mut version = self.version.clone().unwrap_or_else(|| "1.0.0".to_string());
-        let mut author = self.author.clone().unwrap_or_else(|| "Unknown Author".to_string());
+        let mut author = self
+            .author
+            .clone()
+            .unwrap_or_else(|| "Unknown Author".to_string());
 
         let title_id = match &self.title_id {
             None => 0,

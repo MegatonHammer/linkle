@@ -1,12 +1,12 @@
+use block_modes::BlockModeError;
+use derive_more::Display;
+use failure::Backtrace;
+use failure::Fail;
+use ini;
 use std::io;
+use std::path::{Path, PathBuf};
 use std::str::Utf8Error;
 use std::string::FromUtf8Error;
-use std::path::{Path, PathBuf};
-use ini;
-use failure::Backtrace;
-use block_modes::BlockModeError;
-use failure::Fail;
-use derive_more::Display;
 
 #[derive(Debug, Fail, Display)]
 pub enum Error {
@@ -14,7 +14,10 @@ pub enum Error {
     Deserialization(#[cause] serde_json::error::Error),
     #[display(fmt = "{}: {}", "_1.display()", _0)]
     Io(#[cause] io::Error, PathBuf, Backtrace),
-    #[display(fmt = "Internal IO Error (please submit a bug report with the backtrace): {}", _0)]
+    #[display(
+        fmt = "Internal IO Error (please submit a bug report with the backtrace): {}",
+        _0
+    )]
     IoInternal(#[cause] io::Error, Backtrace),
     #[display(fmt = "Decryption failed")]
     BlockMode(BlockModeError, Backtrace),
@@ -87,7 +90,11 @@ impl From<serde_json::error::Error> for Error {
 impl From<FromUtf8Error> for Error {
     fn from(err: FromUtf8Error) -> Error {
         // Why the heck does OsStr not have display()?
-        Error::Utf8Conversion(String::from_utf8_lossy(err.as_bytes()).into_owned(), err.utf8_error(), Backtrace::new())
+        Error::Utf8Conversion(
+            String::from_utf8_lossy(err.as_bytes()).into_owned(),
+            err.utf8_error(),
+            Backtrace::new(),
+        )
     }
 }
 

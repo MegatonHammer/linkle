@@ -42,32 +42,30 @@ jobs:
           command: test
           args: --all-features ${{ matrix.target }}
 
-  # TODO: Run FMT.
-  #fmt:
-  #  name: Rustfmt
-  #  runs-on: ubuntu-latest
-  #  steps:
-  #    - uses: actions/checkout@v2
-  #    - uses: actions-rs/toolchain@v1
-  #      with:
-  #        profile: minimal
-  #    - run: rustup component add rustfmt
-  #    - uses: actions-rs/cargo@v1
-  #      with:
-  #        command: fmt
-  #        args: --all -- --check
+  fmt:
+    name: Rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          components: rustfmt
+      - uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --all -- --check
 
-  # TODO: Run clippy.
-  #clippy:
-  #  name: Clippy
-  #  runs-on: ubuntu-latest
-  #  steps:
-  #    - uses: actions/checkout@v2
-  #    - uses: actions-rs/toolchain@v1
-  #      with:
-  #        profile: minimal
-  #    - run: rustup component add clippy
-  #    - uses: actions-rs/cargo@v1
-  #      with:
-  #        command: clippy
-  #        args: --all-features -- -D warnings
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          components: clippy
+      - uses: actions-rs/cargo@v1
+        with:
+          command: clippy
+          args: --all-features -- -D warnings

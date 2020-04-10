@@ -1,15 +1,15 @@
+use crate::format::utils::HexOrNum;
+use crate::format::{nacp::NacpFile, npdm::KernelCapability, romfs::RomFs, utils};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use elf;
-use elf::types::{EM_ARM, EM_AARCH64, ProgramHeader, PT_LOAD, SHT_NOTE, Machine, SectionHeader};
-use crate::format::{utils, romfs::RomFs, nacp::NacpFile, npdm::KernelCapability};
+use elf::types::{Machine, ProgramHeader, SectionHeader, EM_AARCH64, EM_ARM, PT_LOAD, SHT_NOTE};
+use serde_derive::{Deserialize, Serialize};
 use std;
+use std::convert::{TryFrom, TryInto};
 use std::fs::File;
 use std::io::{self, Cursor, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process;
-use serde_derive::{Serialize, Deserialize};
-use crate::format::utils::HexOrNum;
-use std::convert::{TryFrom, TryInto};
 
 // TODO: Support switchbrew's embedded files for NRO
 pub struct NxoFile {
@@ -72,25 +72,42 @@ where
     Ok(())
 }
 
-fn write_mod0<T>(nxo_file: &NxoFile, offset: u32, output_writter: &mut T, bss_addr: u32, bss_size: u32) -> std::io::Result<()>
+fn write_mod0<T>(
+    nxo_file: &NxoFile,
+    offset: u32,
+    output_writter: &mut T,
+    bss_addr: u32,
+    bss_size: u32,
+) -> std::io::Result<()>
 where
     T: Write,
 {
     // MOD magic
     output_writter.write_all(b"MOD0")?;
     // Dynamic Offset
-    output_writter.write_u32::<LittleEndian>(nxo_file.dynamic_section.as_ref().map(|v| v.addr as u32 - offset).unwrap_or(0))?;
+    output_writter.write_u32::<LittleEndian>(
+        nxo_file
+            .dynamic_section
+            .as_ref()
+            .map(|v| v.addr as u32 - offset)
+            .unwrap_or(0),
+    )?;
 
     // BSS Start Offset
     output_writter.write_u32::<LittleEndian>(bss_addr - offset)?;
     // BSS End Offset
     output_writter.write_u32::<LittleEndian>(bss_addr + bss_size - offset)?;
 
-    let (eh_frame_hdr_addr, eh_frame_hdr_size) = nxo_file.eh_frame_hdr_section.as_ref().map(|v| (v.addr, v.size)).unwrap_or((0, 0));
+    let (eh_frame_hdr_addr, eh_frame_hdr_size) = nxo_file
+        .eh_frame_hdr_section
+        .as_ref()
+        .map(|v| (v.addr, v.size))
+        .unwrap_or((0, 0));
     // EH Frame Header Start
     output_writter.write_u32::<LittleEndian>(eh_frame_hdr_addr as u32 - offset)?;
     // EH Frame Header End
-    output_writter.write_u32::<LittleEndian>(eh_frame_hdr_addr as u32 + eh_frame_hdr_size as u32 - offset)?;
+    output_writter
+        .write_u32::<LittleEndian>(eh_frame_hdr_addr as u32 + eh_frame_hdr_size as u32 - offset)?;
 
     // RTLD ptr - written at runtime by RTLD
     output_writter.write_u32::<LittleEndian>(0)?;
@@ -161,7 +178,7 @@ impl NxoFile {
                 ".dynstr" => dynstr_section = Some(section.shdr.clone()),
                 ".dynsym" => dynsym_section = Some(section.shdr.clone()),
                 ".eh_frame_hdr" => eh_frame_hdr_section = Some(section.shdr.clone()),
-                _ => ()
+                _ => (),
             }
         }
 
@@ -176,11 +193,17 @@ impl NxoFile {
             dynamic_section,
             dynstr_section,
             dynsym_section,
-            eh_frame_hdr_section
+            eh_frame_hdr_section,
         })
     }
 
-    pub fn write_nro<T>(&mut self, output_writter: &mut T, romfs: Option<RomFs>, icon: Option<&str>, nacp: Option<NacpFile>) -> std::io::Result<()>
+    pub fn write_nro<T>(
+        &mut self,
+        output_writter: &mut T,
+        romfs: Option<RomFs>,
+        icon: Option<&str>,
+        nacp: Option<NacpFile>,
+    ) -> std::io::Result<()>
     where
         T: Write,
     {
@@ -253,7 +276,10 @@ impl NxoFile {
                 }
                 output_writter
                     .write_u32::<LittleEndian>(((segment.memsz + 0xFFF) & !0xFFF) as u32)?;
-                (segment.vaddr as u32, ((segment.memsz + 0xFFF) & !0xFFF) as u32)
+                (
+                    segment.vaddr as u32,
+                    ((segment.memsz + 0xFFF) & !0xFFF) as u32,
+                )
             }
             _ => {
                 // in this case the bss is missing or is embedeed in .data. libnx does that, let's support it
@@ -264,7 +290,10 @@ impl NxoFile {
                     0
                 };
                 output_writter.write_u32::<LittleEndian>(bss_size)?;
-                (data_segment.vaddr as u32 + data_segment.memsz as u32, bss_size)
+                (
+                    data_segment.vaddr as u32 + data_segment.memsz as u32,
+                    bss_size,
+                )
             }
         };
 
@@ -282,43 +311,90 @@ impl NxoFile {
         output_writter.write_u64::<LittleEndian>(0)?;
 
         // .dynstr section info
-        output_writter.write_u32::<LittleEndian>(self.dynstr_section.as_ref().map(|v| u32::try_from(v.addr).unwrap()).unwrap_or(0))?;
-        output_writter.write_u32::<LittleEndian>(self.dynstr_section.as_ref().map(|v| u32::try_from(v.size).unwrap()).unwrap_or(0))?;
+        output_writter.write_u32::<LittleEndian>(
+            self.dynstr_section
+                .as_ref()
+                .map(|v| u32::try_from(v.addr).unwrap())
+                .unwrap_or(0),
+        )?;
+        output_writter.write_u32::<LittleEndian>(
+            self.dynstr_section
+                .as_ref()
+                .map(|v| u32::try_from(v.size).unwrap())
+                .unwrap_or(0),
+        )?;
 
         // .dynsym section info
-        output_writter.write_u32::<LittleEndian>(self.dynsym_section.as_ref().map(|v| u32::try_from(v.addr).unwrap()).unwrap_or(0))?;
-        output_writter.write_u32::<LittleEndian>(self.dynsym_section.as_ref().map(|v| u32::try_from(v.size).unwrap()).unwrap_or(0))?;
+        output_writter.write_u32::<LittleEndian>(
+            self.dynsym_section
+                .as_ref()
+                .map(|v| u32::try_from(v.addr).unwrap())
+                .unwrap_or(0),
+        )?;
+        output_writter.write_u32::<LittleEndian>(
+            self.dynsym_section
+                .as_ref()
+                .map(|v| u32::try_from(v.size).unwrap())
+                .unwrap_or(0),
+        )?;
 
         let module_offset = u32::from_le_bytes(code[4..8].try_into().unwrap()) as usize;
-        if module_offset != 0 && !(
-            (0x80..code_size).contains(&(module_offset as u32)) ||
-            (rodata_offset..data_offset).contains(&(module_offset as u32)) ||
-            (data_offset..file_offset).contains(&(module_offset as u32)))
+        if module_offset != 0
+            && !((0x80..code_size).contains(&(module_offset as u32))
+                || (rodata_offset..data_offset).contains(&(module_offset as u32))
+                || (data_offset..file_offset).contains(&(module_offset as u32)))
         {
             panic!("Invalid module offset {}", module_offset)
         }
 
-        if (0x80..code_size).contains(&(module_offset as u32)) && &code[module_offset..module_offset + 4] != b"MOD0" {
+        if (0x80..code_size).contains(&(module_offset as u32))
+            && &code[module_offset..module_offset + 4] != b"MOD0"
+        {
             output_writter.write_all(&code[0x80..module_offset])?;
-            write_mod0(self, module_offset as u32, output_writter, bss_start, bss_size)?;
+            write_mod0(
+                self,
+                module_offset as u32,
+                output_writter,
+                bss_start,
+                bss_size,
+            )?;
             output_writter.write_all(&code[module_offset + 0x1C..])?;
         } else {
             output_writter.write_all(&code[0x80..])?;
         }
 
-        if (rodata_offset..data_offset).contains(&(module_offset as u32)) && &rodata[module_offset - rodata_offset as usize..module_offset - rodata_offset as usize+ 4] != b"MOD0" {
+        if (rodata_offset..data_offset).contains(&(module_offset as u32))
+            && &rodata
+                [module_offset - rodata_offset as usize..module_offset - rodata_offset as usize + 4]
+                != b"MOD0"
+        {
             let rodata_module_offset = module_offset - rodata_offset as usize;
             output_writter.write_all(&rodata[..rodata_module_offset])?;
-            write_mod0(self, module_offset as u32, output_writter, bss_start, bss_size)?;
+            write_mod0(
+                self,
+                module_offset as u32,
+                output_writter,
+                bss_start,
+                bss_size,
+            )?;
             output_writter.write_all(&rodata[rodata_module_offset + 0x1C..])?;
         } else {
             output_writter.write_all(&rodata)?;
         }
 
-        if (data_offset..file_offset).contains(&(module_offset as u32)) && &data[module_offset - data_offset as usize..module_offset - data_offset as usize + 4] != b"MOD0" {
+        if (data_offset..file_offset).contains(&(module_offset as u32))
+            && &data[module_offset - data_offset as usize..module_offset - data_offset as usize + 4]
+                != b"MOD0"
+        {
             let data_module_offset = module_offset - data_offset as usize;
             output_writter.write_all(&data[..data_module_offset])?;
-            write_mod0(self, module_offset as u32, output_writter, bss_start, bss_size)?;
+            write_mod0(
+                self,
+                module_offset as u32,
+                output_writter,
+                bss_start,
+                bss_size,
+            )?;
             output_writter.write_all(&data[data_module_offset + 0x1C..])?;
         } else {
             output_writter.write_all(&data)?;
@@ -326,7 +402,7 @@ impl NxoFile {
 
         // Early return if there's no need for an ASET segment.
         if let (None, None, None) = (&icon, &romfs, &nacp) {
-            return Ok(())
+            return Ok(());
         }
 
         // Aset handling
@@ -372,7 +448,11 @@ impl NxoFile {
         };
 
         if let Some(icon) = icon {
-            assert_eq!(io::copy(&mut File::open(icon)?, output_writter)?, icon_len, "Icon changed while building.");
+            assert_eq!(
+                io::copy(&mut File::open(icon)?, output_writter)?,
+                icon_len,
+                "Icon changed while building."
+            );
         }
 
         if let Some(mut nacp) = nacp {
@@ -491,11 +571,31 @@ impl NxoFile {
         // TODO: SegmentHeaderRelative for .api_info
         output_writter.write_u64::<LittleEndian>(0)?;
         // SegmentHeaderRelative for .dynstr
-        output_writter.write_u32::<LittleEndian>(self.dynstr_section.as_ref().map(|v| u32::try_from(v.addr).unwrap()).unwrap_or(0))?;
-        output_writter.write_u32::<LittleEndian>(self.dynstr_section.as_ref().map(|v| u32::try_from(v.size).unwrap()).unwrap_or(0))?;
+        output_writter.write_u32::<LittleEndian>(
+            self.dynstr_section
+                .as_ref()
+                .map(|v| u32::try_from(v.addr).unwrap())
+                .unwrap_or(0),
+        )?;
+        output_writter.write_u32::<LittleEndian>(
+            self.dynstr_section
+                .as_ref()
+                .map(|v| u32::try_from(v.size).unwrap())
+                .unwrap_or(0),
+        )?;
         // SegmentHeaderRelative for .dynsym
-        output_writter.write_u32::<LittleEndian>(self.dynsym_section.as_ref().map(|v| u32::try_from(v.addr).unwrap()).unwrap_or(0))?;
-        output_writter.write_u32::<LittleEndian>(self.dynsym_section.as_ref().map(|v| u32::try_from(v.size).unwrap()).unwrap_or(0))?;
+        output_writter.write_u32::<LittleEndian>(
+            self.dynsym_section
+                .as_ref()
+                .map(|v| u32::try_from(v.addr).unwrap())
+                .unwrap_or(0),
+        )?;
+        output_writter.write_u32::<LittleEndian>(
+            self.dynsym_section
+                .as_ref()
+                .map(|v| u32::try_from(v.size).unwrap())
+                .unwrap_or(0),
+        )?;
 
         // .text sha256
         let text_sum = utils::calculate_sha256(&code)?;
@@ -521,7 +621,7 @@ impl NxoFile {
         T: Write,
     {
         output_writer.write_all(b"KIP1")?;
-        let mut name : Vec<u8> = npdm.name.clone().into();
+        let mut name: Vec<u8> = npdm.name.clone().into();
         name.resize(12, 0);
         output_writer.write_all(&name[..])?;
         output_writer.write_u64::<LittleEndian>(npdm.title_id.0)?; // TitleId
@@ -533,10 +633,10 @@ impl NxoFile {
             output_writer.write_u8(flags)?;
         } else if self.machine == EM_AARCH64 {
             // Compression enable, Is64Bit, IsAddrSpace32Bit, UseSystemPoolPartition
-            output_writer.write_u8(0b00111111)?;
+            output_writer.write_u8(0b0011_1111)?;
         } else if self.machine == EM_ARM {
             // Compression enable, UseSystemPoolPartition
-            output_writer.write_u8(0b00100111)?;
+            output_writer.write_u8(0b0010_0111)?;
         } else {
             unimplemented!("Unknown machine type");
         }
@@ -549,12 +649,22 @@ impl NxoFile {
         let data_data = utils::compress_blz(&mut segment_data).unwrap();
 
         write_kip_segment_header(output_writer, &self.text_segment, 0, text_data.len() as u32)?;
-        write_kip_segment_header(output_writer, &self.rodata_segment, u32::try_from(npdm.main_thread_stack_size.0).expect("Exected main_thread_stack_size to be an u32"), rodata_data.len() as u32)?;
+        write_kip_segment_header(
+            output_writer,
+            &self.rodata_segment,
+            u32::try_from(npdm.main_thread_stack_size.0)
+                .expect("Exected main_thread_stack_size to be an u32"),
+            rodata_data.len() as u32,
+        )?;
         write_kip_segment_header(output_writer, &self.data_segment, 0, data_data.len() as u32)?;
 
         if let Some(segment) = self.bss_segment {
-            output_writer.write_u32::<LittleEndian>(u32::try_from(segment.vaddr).expect("BSS vaddr too big"))?;
-            output_writer.write_u32::<LittleEndian>(u32::try_from(segment.memsz).expect("BSS memsize too big"))?;
+            output_writer.write_u32::<LittleEndian>(
+                u32::try_from(segment.vaddr).expect("BSS vaddr too big"),
+            )?;
+            output_writer.write_u32::<LittleEndian>(
+                u32::try_from(segment.memsz).expect("BSS memsize too big"),
+            )?;
         } else {
             // in this case the bss is missing or is embedeed in .data. libnx does that, let's support it
             let data_segment_size = (self.data_segment.filesz + 0xFFF) & !0xFFF;
@@ -563,14 +673,16 @@ impl NxoFile {
             } else {
                 0
             };
-            output_writer.write_u32::<LittleEndian>(u32::try_from(self.data_segment.vaddr + data_segment_size).unwrap())?;
+            output_writer.write_u32::<LittleEndian>(
+                u32::try_from(self.data_segment.vaddr + data_segment_size).unwrap(),
+            )?;
             output_writer.write_u32::<LittleEndian>(bss_size)?;
         }
         output_writer.write_u32::<LittleEndian>(0)?;
         output_writer.write_u32::<LittleEndian>(0)?;
 
         // Empty Sections:
-        for i in 4..6 {
+        for _ in 4..6 {
             output_writer.write_u32::<LittleEndian>(0)?;
             output_writer.write_u32::<LittleEndian>(0)?;
             output_writer.write_u32::<LittleEndian>(0)?;
@@ -578,16 +690,24 @@ impl NxoFile {
         }
 
         // Kernel caps:
-        let caps = npdm.kernel_capabilities.iter()
+        let caps = npdm
+            .kernel_capabilities
+            .iter()
             .map(|v| v.encode())
             .flatten()
             .collect::<Vec<u32>>();
-        assert!(caps.len() < 0x20, "kernel_capabilities should have less than 0x20 entries!");
+        assert!(
+            caps.len() < 0x20,
+            "kernel_capabilities should have less than 0x20 entries!"
+        );
 
         unsafe {
             // Safety: This is safe. I'm just casting a slice of u32 to a slice of u8
             // for fuck's sake.
-            output_writer.write_all(std::slice::from_raw_parts(caps.as_ptr() as *const u8, caps.len() * 4))?;
+            output_writer.write_all(std::slice::from_raw_parts(
+                caps.as_ptr() as *const u8,
+                caps.len() * 4,
+            ))?;
         }
 
         output_writer.write_all(&vec![0xFF; (0x20 - caps.len()) * 4])?;
@@ -601,13 +721,22 @@ impl NxoFile {
     }
 }
 
-pub fn write_kip_segment_header<T>(output_writer: &mut T, segment: &ProgramHeader, attributes: u32, compressed_size: u32) -> std::io::Result<()>
+pub fn write_kip_segment_header<T>(
+    output_writer: &mut T,
+    segment: &ProgramHeader,
+    attributes: u32,
+    compressed_size: u32,
+) -> std::io::Result<()>
 where
     T: Write,
 {
-    output_writer.write_u32::<LittleEndian>(u32::try_from(segment.vaddr).expect("vaddr too big"))?;
-    output_writer.write_u32::<LittleEndian>(u32::try_from(segment.filesz).expect("memsz too big"))?;
-    output_writer.write_u32::<LittleEndian>(u32::try_from(compressed_size).expect("Compressed size too big"))?;
+    output_writer
+        .write_u32::<LittleEndian>(u32::try_from(segment.vaddr).expect("vaddr too big"))?;
+    output_writer
+        .write_u32::<LittleEndian>(u32::try_from(segment.filesz).expect("memsz too big"))?;
+    output_writer.write_u32::<LittleEndian>(
+        u32::try_from(compressed_size).expect("Compressed size too big"),
+    )?;
     output_writer.write_u32::<LittleEndian>(attributes)?;
 
     Ok(())
