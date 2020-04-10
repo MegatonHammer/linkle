@@ -7,6 +7,7 @@ use failure::Backtrace;
 use block_modes::BlockModeError;
 use failure::Fail;
 use derive_more::Display;
+use std::borrow::Cow;
 
 #[derive(Debug, Fail, Display)]
 pub enum Error {
@@ -32,6 +33,16 @@ pub enum Error {
     RomFsSymlink(PathBuf, Backtrace),
     #[display(fmt = "Unknown file type at {}", "_0.display()")]
     RomFsFiletype(PathBuf, Backtrace),
+    #[display(fmt = "Invalid NPDM value for field {}", "_0")]
+    InvalidNpdmValue(Cow<'static, str>, Backtrace),
+    #[display(fmt = "Failed to serialize NPDM.")]
+    BincodeError(#[cause] Box<bincode::ErrorKind>, Backtrace),
+    #[display(fmt = "Failed to sign NPDM.")]
+    RsaError(#[cause] rsa::errors::Error, Backtrace),
+    #[display(fmt = "Failed to sign NPDM, invalid PEM.")]
+    PemError(#[cause] pem::PemError, Backtrace),
+    #[display(fmt = "Failed to sign NPDM, invalid PEM.")]
+    Asn1Error(#[cause] yasna::ASN1Error, Backtrace),
 }
 
 impl Error {
@@ -94,5 +105,29 @@ impl From<FromUtf8Error> for Error {
 impl From<(usize, cmac::crypto_mac::MacError)> for Error {
     fn from((id, err): (usize, cmac::crypto_mac::MacError)) -> Error {
         Error::MacError(err, id, Backtrace::new())
+    }
+}
+
+impl From<Box<bincode::ErrorKind>> for Error {
+    fn from(err: Box<bincode::ErrorKind>) -> Error {
+        Error::BincodeError(err, Backtrace::new())
+    }
+}
+
+impl From<rsa::errors::Error> for Error {
+    fn from(err: rsa::errors::Error) -> Error {
+        Error::RsaError(err, Backtrace::new())
+    }
+}
+
+impl From<pem::PemError> for Error {
+    fn from(err: pem::PemError) -> Error {
+        Error::PemError(err, Backtrace::new())
+    }
+}
+
+impl From<yasna::ASN1Error> for Error {
+    fn from(err: yasna::ASN1Error) -> Error {
+        Error::Asn1Error(err, Backtrace::new())
     }
 }

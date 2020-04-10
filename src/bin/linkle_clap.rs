@@ -94,6 +94,25 @@ enum Opt {
         /// Key file to use
         #[structopt(parse(from_os_str), short = "k", long = "keyset")]
         keyfile: Option<PathBuf>,
+    },
+    /// Create an NPDM from a JSON-NPDM formatted file.
+    #[structopt(name = "npdm")]
+    Npdm {
+        /// Sets the input JSON file to use.
+        #[structopt(parse(from_os_str))]
+        input_file: PathBuf,
+
+        /// Sets the output NPDM file to use.
+        #[structopt(parse(from_os_str))]
+        output_file: PathBuf,
+
+        /// Use the given file for the ACID section.
+        #[structopt(long = "use-acid", parse(from_os_str), conflicts_with = "pem_file")]
+        acid_file: Option<PathBuf>,
+
+        /// Sign the ACID section with the given RSA private key.
+        #[structopt(long = "sign-with", parse(from_os_str))]
+        pem_file: Option<PathBuf>,
     }
 }
 
@@ -197,6 +216,27 @@ fn print_keys(is_dev: bool, key_path: Option<&Path>) -> Result<(), linkle::error
     Ok(())
 }
 
+fn create_npdm(input_file: &Path, input_acid: Option<&Path>, sign_acid: Option<&Path>, output_file: &Path) -> Result<(), linkle::error::Error> {
+    use linkle::format::npdm::{NpdmJson, ACIDBehavior};
+
+    let npdm = NpdmJson::from_file(&input_file)?;
+    let mut option = OpenOptions::new();
+    let output_option = option.write(true).create(true).truncate(true);
+    let mut out_file = output_option.open(output_file).map_err(|err| (err, output_file))?;
+    let behavior = if sign_acid.is_some() && input_acid.is_some() {
+        // They are set as conflicting in clap, so we can't reach here.
+        unreachable!("Can't pass both sign_acid and input_acid.");
+    } else if let Some(input_pem) = sign_acid {
+        ACIDBehavior::Sign { pem_file_path: input_pem }
+    } else if let Some(input_acid) = input_acid {
+        ACIDBehavior::Use { acid_file_path: input_acid }
+    } else {
+        ACIDBehavior::Empty
+    };
+    npdm.into_npdm(&mut out_file, behavior)?;
+    Ok(())
+}
+
 fn to_opt_ref<U: ?Sized, T: AsRef<U>>(s: &Option<T>) -> Option<&U> {
     s.as_ref().map(AsRef::as_ref)
 }
@@ -211,6 +251,7 @@ fn process_args(app: &Opt) {
         Opt::Nacp { ref input_file, ref output_file } => create_nacp(input_file, output_file),
         Opt::Romfs { ref input_directory, ref output_file } => create_romfs(input_directory, output_file),
         Opt::Keygen { dev, ref keyfile } => print_keys(*dev, to_opt_ref(keyfile)),
+        Opt::Npdm { ref input_file, ref pem_file, ref acid_file, ref output_file } => create_npdm(input_file, to_opt_ref(acid_file), to_opt_ref(pem_file), output_file)
     };
 
     if let Err(e) = res {
