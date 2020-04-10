@@ -50,7 +50,7 @@ jobs:
       - uses: actions-rs/toolchain@v1
         with:
           profile: minimal
-      - run: rustup component add rustfmt
+          components: rustfmt
       - uses: actions-rs/cargo@v1
         with:
           command: fmt
@@ -64,7 +64,7 @@ jobs:
       - uses: actions-rs/toolchain@v1
         with:
           profile: minimal
-      - run: rustup component add clippy
+          components: clippy
       - uses: actions-rs/cargo@v1
         with:
           command: clippy
