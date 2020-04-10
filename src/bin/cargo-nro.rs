@@ -7,9 +7,9 @@ extern crate url;
 #[macro_use]
 extern crate serde_derive;
 extern crate cargo_metadata;
+extern crate cargo_toml2;
 extern crate goblin;
 extern crate scroll;
-extern crate cargo_toml2;
 
 use scroll::IOwrite;
 use std::env::{self, VarError};
@@ -289,11 +289,9 @@ fn main() {
     let config_path = Path::new("./.cargo/config");
     let target = if config_path.exists() {
         let config: Option<CargoConfig> = cargo_toml2::from_path(config_path).ok();
-        config.map(
-            |config| config.build.map(
-                |build| build.target
-            ).flatten()
-        ).flatten()
+        config
+            .map(|config| config.build.map(|build| build.target).flatten())
+            .flatten()
     } else {
         None
     };
