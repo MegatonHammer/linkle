@@ -7,6 +7,7 @@ extern crate url;
 #[macro_use]
 extern crate serde_derive;
 extern crate cargo_metadata;
+extern crate cargo_toml2;
 extern crate goblin;
 extern crate scroll;
 
@@ -18,6 +19,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use cargo_metadata::{Message, Package};
+use cargo_toml2::CargoConfig;
 use clap::{App, Arg};
 use derive_more::Display;
 use failure::Fail;
@@ -101,6 +103,7 @@ fn get_metadata(
     target_name: &str,
 ) -> (Package, PackageMetadata) {
     let metadata = cargo_metadata::metadata(Some(&manifest_path)).unwrap();
+
     let package = metadata
         .packages
         .into_iter()
@@ -283,10 +286,22 @@ fn main() {
 
     let mut command = Command::new("xargo");
 
+    let config_path = Path::new("./.cargo/config");
+    let target = if config_path.exists() {
+        let config: Option<CargoConfig> = cargo_toml2::from_path(config_path).ok();
+        config
+            .map(|config| config.build.map(|build| build.target).flatten())
+            .flatten()
+    } else {
+        None
+    };
+
+    let target = target.as_deref().unwrap_or("aarch64-roblabla-switch");
+
     command
         .args(&[
             "build",
-            "--target=aarch64-roblabla-switch",
+            &format!("--target={}", target),
             "--message-format=json",
         ])
         .stdout(Stdio::piped())

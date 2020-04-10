@@ -41,6 +41,7 @@ derive_more = "0.13"
 cmac = "0.2.0"
 blz-nx = { git = "https://github.com/Thog/blz-nx-rs" }
 bit_field = "0.10.0"
+cargo-toml2 = { version = "1.3.2", optional = true }
 
 [features]
-binaries = ["structopt", "cargo_metadata", "scroll", "goblin", "clap"]
+binaries = ["structopt", "cargo_metadata", "scroll", "goblin", "clap", "cargo-toml2"]
