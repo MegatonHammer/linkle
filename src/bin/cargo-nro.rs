@@ -1,37 +1,37 @@
 #[macro_use]
 extern crate clap;
-extern crate url;
 extern crate linkle;
 extern crate serde;
 extern crate serde_json;
+extern crate url;
 #[macro_use]
 extern crate serde_derive;
 extern crate cargo_metadata;
 extern crate goblin;
 extern crate scroll;
 
-use std::env::{self, VarError};
-use std::process::{Command, Stdio};
-use std::path::{Path, PathBuf};
-use std::fs::File;
-use std::io::{Write, Read};
 use scroll::IOwrite;
+use std::env::{self, VarError};
+use std::fs::File;
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
-use linkle::format::{romfs::RomFs, nxo::NxoFile, nacp::NacpFile};
-use cargo_metadata::{Package, Message};
-use clap::{Arg, App};
-use url::Url;
-use goblin::elf::{Elf, Header as ElfHeader, ProgramHeader};
-use goblin::elf::section_header::{SHT_NOBITS, SHT_SYMTAB, SHT_STRTAB};
-use failure::Fail;
+use cargo_metadata::{Message, Package};
+use clap::{App, Arg};
 use derive_more::Display;
+use failure::Fail;
+use goblin::elf::section_header::{SHT_NOBITS, SHT_STRTAB, SHT_SYMTAB};
+use goblin::elf::{Elf, Header as ElfHeader, ProgramHeader};
+use linkle::format::{nacp::NacpFile, nxo::NxoFile, romfs::RomFs};
+use url::Url;
 
 #[derive(Debug, Fail, Display)]
 enum Error {
     #[display(fmt = "{}", _0)]
     Goblin(#[cause] goblin::error::Error),
     #[display(fmt = "{}", _0)]
-    Linkle(#[cause] linkle::error::Error)
+    Linkle(#[cause] linkle::error::Error),
 }
 
 impl From<goblin::error::Error> for Error {
@@ -95,19 +95,38 @@ const CARGO_OPTIONS: &str = "CARGO OPTIONS:
     -Z <FLAG>...                    Unstable (nightly-only) flags to Cargo, see 'cargo -Z help' for details
     -h, --help                      Prints help information";
 
-
-fn get_metadata(manifest_path: &Path, package_id: &str, target_name: &str) -> (Package, PackageMetadata) {
+fn get_metadata(
+    manifest_path: &Path,
+    package_id: &str,
+    target_name: &str,
+) -> (Package, PackageMetadata) {
     let metadata = cargo_metadata::metadata(Some(&manifest_path)).unwrap();
-    let package = metadata.packages.into_iter().find(|v| v.id == package_id).unwrap();
-    let package_metadata = serde_json::from_value(package.metadata.pointer(&format!("linkle/{}", target_name)).cloned().unwrap_or(serde_json::Value::Null)).unwrap_or_default();
+    let package = metadata
+        .packages
+        .into_iter()
+        .find(|v| v.id == package_id)
+        .unwrap();
+    let package_metadata = serde_json::from_value(
+        package
+            .metadata
+            .pointer(&format!("linkle/{}", target_name))
+            .cloned()
+            .unwrap_or(serde_json::Value::Null),
+    )
+    .unwrap_or_default();
     (package, package_metadata)
 }
 
 trait BetterIOWrite<Ctx: Copy>: IOwrite<Ctx> {
-    fn iowrite_with_try<N: scroll::ctx::SizeWith<Ctx, Units = usize> + scroll::ctx::TryIntoCtx<Ctx>>(&mut self, n: N, ctx: Ctx)
-                                                                           -> Result<(), N::Error>
+    fn iowrite_with_try<
+        N: scroll::ctx::SizeWith<Ctx, Units = usize> + scroll::ctx::TryIntoCtx<Ctx>,
+    >(
+        &mut self,
+        n: N,
+        ctx: Ctx,
+    ) -> Result<(), N::Error>
     where
-        N::Error: From<std::io::Error>
+        N::Error: From<std::io::Error>,
     {
         let mut buf = [0u8; 256];
         let size = N::size_with(&ctx);
@@ -120,7 +139,10 @@ trait BetterIOWrite<Ctx: Copy>: IOwrite<Ctx> {
 
 impl<Ctx: Copy, W: IOwrite<Ctx> + ?Sized> BetterIOWrite<Ctx> for W {}
 
-fn generate_debuginfo_romfs<P: AsRef<Path>>(elf_path: &Path, romfs: Option<P>) -> Result<RomFs, Error> {
+fn generate_debuginfo_romfs<P: AsRef<Path>>(
+    elf_path: &Path,
+    romfs: Option<P>,
+) -> Result<RomFs, Error> {
     let mut elf_file = File::open(elf_path)?;
     let mut buffer = Vec::new();
     elf_file.read_to_end(&mut buffer)?;
@@ -139,12 +161,23 @@ fn generate_debuginfo_romfs<P: AsRef<Path>>(elf_path: &Path, romfs: Option<P>) -
         } = elf;
 
         let ctx = goblin::container::Ctx {
-            container: if is_64 { goblin::container::Container::Big } else { goblin::container::Container::Little },
-            le: if little_endian { goblin::container::Endian::Little } else { goblin::container::Endian::Big }
+            container: if is_64 {
+                goblin::container::Container::Big
+            } else {
+                goblin::container::Container::Little
+            },
+            le: if little_endian {
+                goblin::container::Endian::Little
+            } else {
+                goblin::container::Endian::Big
+            },
         };
 
         for section in section_headers.iter_mut() {
-            if section.sh_type == SHT_NOBITS || section.sh_type == SHT_SYMTAB || section.sh_type == SHT_STRTAB {
+            if section.sh_type == SHT_NOBITS
+                || section.sh_type == SHT_SYMTAB
+                || section.sh_type == SHT_STRTAB
+            {
                 continue;
             }
             if let Some(Ok(s)) = elf.shdr_strtab.get(section.sh_name) {
@@ -156,13 +189,17 @@ fn generate_debuginfo_romfs<P: AsRef<Path>>(elf_path: &Path, romfs: Option<P>) -
 
         // Calculate section data length + elf/program headers
         let data_off = ElfHeader::size(&ctx) + ProgramHeader::size(&ctx) * program_headers.len();
-        let shoff = data_off as u64 + section_headers.iter().map(|v| {
-            if v.sh_type != SHT_NOBITS {
-                v.sh_size
-            } else {
-                0
-            }
-        }).sum::<u64>();
+        let shoff = data_off as u64
+            + section_headers
+                .iter()
+                .map(|v| {
+                    if v.sh_type != SHT_NOBITS {
+                        v.sh_size
+                    } else {
+                        0
+                    }
+                })
+                .sum::<u64>();
 
         // Write ELF header
         // TODO: Anything else?
@@ -177,8 +214,13 @@ fn generate_debuginfo_romfs<P: AsRef<Path>>(elf_path: &Path, romfs: Option<P>) -
 
         // Write section data
         let mut cur_idx = data_off;
-        for section in section_headers.iter_mut().filter(|v| v.sh_type != SHT_NOBITS) {
-            file.write_all(&buffer[section.sh_offset as usize..(section.sh_offset + section.sh_size) as usize])?;
+        for section in section_headers
+            .iter_mut()
+            .filter(|v| v.sh_type != SHT_NOBITS)
+        {
+            file.write_all(
+                &buffer[section.sh_offset as usize..(section.sh_offset + section.sh_size) as usize],
+            )?;
             section.sh_offset = cur_idx as u64;
             cur_idx += section.sh_size as usize;
         }
@@ -208,7 +250,7 @@ struct PackageMetadata {
     romfs: Option<String>,
     nacp: Option<NacpFile>,
     icon: Option<String>,
-    title_id: Option<String>
+    title_id: Option<String>,
 }
 
 fn main() {
@@ -221,25 +263,32 @@ fn main() {
 
     let matches = App::new(crate_name!())
         .about("Compile rust switch homebrews with ease!")
-        .arg(Arg::with_name("CARGO_OPTIONS")
-             .raw(true)
-             .help("Options that will be passed to cargo build"))
+        .arg(
+            Arg::with_name("CARGO_OPTIONS")
+                .raw(true)
+                .help("Options that will be passed to cargo build"),
+        )
         .after_help(CARGO_OPTIONS)
         .get_matches_from(args);
-
 
     let rust_target_path = match env::var("RUST_TARGET_PATH") {
         Err(VarError::NotPresent) => {
             // TODO: Handle workspace
-            find_project_root(&env::current_dir().unwrap()).unwrap().into()
-        },
+            find_project_root(&env::current_dir().unwrap())
+                .unwrap()
+                .into()
+        }
         s => PathBuf::from(s.unwrap()),
     };
 
     let mut command = Command::new("xargo");
 
     command
-        .args(&["build", "--target=aarch64-roblabla-switch", "--message-format=json"])
+        .args(&[
+            "build",
+            "--target=aarch64-roblabla-switch",
+            "--message-format=json",
+        ])
         .stdout(Stdio::piped())
         .env("RUST_TARGET_PATH", rust_target_path.as_os_str());
 
@@ -252,7 +301,10 @@ fn main() {
     let iter = cargo_metadata::parse_message_stream(command.stdout.unwrap());
     for message in iter {
         match message {
-            Ok(Message::CompilerArtifact(ref artifact)) if artifact.target.kind.contains(&"bin".into()) || artifact.target.kind.contains(&"cdylib".into()) => {
+            Ok(Message::CompilerArtifact(ref artifact))
+                if artifact.target.kind.contains(&"bin".into())
+                    || artifact.target.kind.contains(&"cdylib".into()) =>
+            {
                 // Find the artifact's source. This is not going to be pretty.
                 // For whatever reason, cargo thought it'd be a *great idea* to make file URLs use
                 // the non-standard "path+file:///" scheme, instead of, y'know, the ""file:///" everyone
@@ -273,7 +325,8 @@ fn main() {
                 let root = url.to_file_path().unwrap();
                 let manifest = root.join("Cargo.toml");
 
-                let (package, target_metadata) = get_metadata(&manifest, &artifact.package_id.raw, &artifact.target.name);
+                let (package, target_metadata) =
+                    get_metadata(&manifest, &artifact.package_id.raw, &artifact.target.name);
 
                 let romfs = if let Some(romfs) = target_metadata.romfs {
                     let romfs_path = root.join(romfs);
@@ -312,30 +365,34 @@ fn main() {
                     nacp.title_id = target_metadata.title_id;
                 }
 
-                let romfs = generate_debuginfo_romfs(Path::new(&artifact.filenames[0]), romfs).unwrap();
+                let romfs =
+                    generate_debuginfo_romfs(Path::new(&artifact.filenames[0]), romfs).unwrap();
 
                 let mut new_name = PathBuf::from(artifact.filenames[0].clone());
                 assert!(new_name.set_extension("nro"));
 
-                NxoFile::from_elf(&artifact.filenames[0]).unwrap()
-                    .write_nro(&mut File::create(new_name.clone()).unwrap(),
-                               Some(romfs),
-                               icon_file,
-                               Some(nacp)
-                    ).unwrap();
+                NxoFile::from_elf(&artifact.filenames[0])
+                    .unwrap()
+                    .write_nro(
+                        &mut File::create(new_name.clone()).unwrap(),
+                        Some(romfs),
+                        icon_file,
+                        Some(nacp),
+                    )
+                    .unwrap();
 
                 println!("Built {}", new_name.to_string_lossy());
-            },
+            }
             Ok(Message::CompilerArtifact(_artifact)) => {
                 //println!("{:#?}", artifact);
-            },
+            }
             Ok(Message::CompilerMessage(msg)) => {
                 if let Some(msg) = msg.message.rendered {
                     println!("{}", msg);
                 } else {
                     println!("{:?}", msg);
                 }
-            },
+            }
             Ok(_) => (),
             Err(err) => {
                 panic!("{:?}", err);

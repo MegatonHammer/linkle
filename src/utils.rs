@@ -1,14 +1,12 @@
+use core::ops::{BitAnd, Not};
 use num_traits::Num;
-use core::ops::{Not, BitAnd};
 use std::io;
 
-pub fn align_down<T: Num + Not<Output = T> + BitAnd<Output = T> + Copy>(addr: T, align: T) -> T
-{
+pub fn align_down<T: Num + Not<Output = T> + BitAnd<Output = T> + Copy>(addr: T, align: T) -> T {
     addr & !(align - T::one())
 }
 
-pub fn align_up<T: Num + Not<Output = T> + BitAnd<Output = T> + Copy>(addr: T, align: T) -> T
-{
+pub fn align_up<T: Num + Not<Output = T> + BitAnd<Output = T> + Copy>(addr: T, align: T) -> T {
     align_down(addr + (align - T::one()), align)
 }
 
@@ -18,7 +16,9 @@ pub trait TryClone: Sized {
 }
 
 impl TryClone for std::fs::File {
-    fn try_clone(&self) -> std::io::Result<Self> { std::fs::File::try_clone(&self) }
+    fn try_clone(&self) -> std::io::Result<Self> {
+        std::fs::File::try_clone(&self)
+    }
 }
 
 pub struct ReadRange<R> {
@@ -34,7 +34,7 @@ impl<R> ReadRange<R> {
             inner: stream,
             start_from,
             size: max_size,
-            inner_pos: 0
+            inner_pos: 0,
         }
     }
 
@@ -65,18 +65,24 @@ impl<R: io::Seek> io::Seek for ReadRange<R> {
                     if let Some(s) = self.inner_pos.checked_sub(-val as u64) {
                         s
                     } else {
-                        return Err(io::Error::new(io::ErrorKind::InvalidInput, "Seek before position 0"));
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "Seek before position 0",
+                        ));
                     }
                 } else {
                     self.inner_pos + val as u64
                 }
-            },
+            }
             io::SeekFrom::End(val) => {
                 if val < 0 {
                     if let Some(s) = self.size.checked_sub(-val as u64) {
                         s
                     } else {
-                        return Err(io::Error::new(io::ErrorKind::InvalidInput, "Seek before position 0"));
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "Seek before position 0",
+                        ));
                     }
                 } else {
                     self.size + val as u64
@@ -84,7 +90,9 @@ impl<R: io::Seek> io::Seek for ReadRange<R> {
             }
         };
 
-        let newpos = self.inner.seek(io::SeekFrom::Start(self.start_from + new_inner_pos))?;
+        let newpos = self
+            .inner
+            .seek(io::SeekFrom::Start(self.start_from + new_inner_pos))?;
         self.inner_pos = newpos - self.start_from;
         Ok(self.inner_pos)
     }

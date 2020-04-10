@@ -1,11 +1,11 @@
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use crate::format::utils;
 use crate::error::Error;
-use crate::utils::{ReadRange, TryClone, align_up};
+use crate::format::utils;
+use crate::utils::{align_up, ReadRange, TryClone};
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use failure::Backtrace;
 use std;
 use std::fs::File;
-use std::io::{self, Read, Seek, SeekFrom, Write, BufRead};
+use std::io::{self, BufRead, Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 
 pub trait ReadSeek: Read + Seek {}
@@ -17,8 +17,8 @@ enum Pfs0Meta {
     SubFile {
         file: Box<dyn ReadSeek>,
         name: String,
-        size: u64
-    }
+        size: u64,
+    },
 }
 
 impl Pfs0Meta {
@@ -56,7 +56,7 @@ impl Pfs0 {
         let mut magic = [0; 4];
         f.read_exact(&mut magic)?;
         if &magic != b"PFS0" {
-            return Err(Error::InvalidPfs0("magic is wrong", Backtrace::new()))
+            return Err(Error::InvalidPfs0("magic is wrong", Backtrace::new()));
         }
 
         let filecount = f.read_u32::<LittleEndian>()?;
@@ -85,12 +85,10 @@ impl Pfs0 {
             finalfiles.push(Pfs0Meta::SubFile {
                 file: Box::new(ReadRange::new(f.get_ref().try_clone()?, offset, size)),
                 name: filename,
-                size
+                size,
             });
         }
-        Ok(Pfs0 {
-            files: finalfiles
-        })
+        Ok(Pfs0 { files: finalfiles })
     }
 
     pub fn write_pfs0<T>(&mut self, output_writter: &mut T) -> std::io::Result<()>
@@ -104,13 +102,8 @@ impl Pfs0 {
         // Header
         output_writter.write_all(b"PFS0")?;
         output_writter.write_u32::<LittleEndian>(file_count)?;
-        let string_table_size = utils::align(
-           files
-                .iter()
-                .map(|x| x.file_name().len() + 1)
-                .sum(),
-            0x1F,
-        );
+        let string_table_size =
+            utils::align(files.iter().map(|x| x.file_name().len() + 1).sum(), 0x1F);
         output_writter.write_u32::<LittleEndian>(string_table_size as u32)?;
         output_writter.write_u32::<LittleEndian>(0)?;
 
@@ -127,10 +120,13 @@ impl Pfs0 {
         let mut string_offset = 0;
         let mut data_offset = 0;
 
-        for (file_index, file) in files.iter_mut().enumerate().map(|(idx, path)| (idx as u64, path))  {
+        for (file_index, file) in files
+            .iter_mut()
+            .enumerate()
+            .map(|(idx, path)| (idx as u64, path))
+        {
             // Seek and write file name to string table
-            output_writter
-                .seek(SeekFrom::Start(string_table_pos + string_offset))?;
+            output_writter.seek(SeekFrom::Start(string_table_pos + string_offset))?;
 
             println!(
                 "Writing {}... [{}/{}]",
@@ -150,23 +146,21 @@ impl Pfs0 {
                     let file_size = host_file.metadata()?.len();
                     let name = path.file_name().unwrap().to_str().unwrap();
                     (&mut host_file as &mut dyn ReadSeek, file_size, name)
-                },
-                Pfs0Meta::SubFile { file, name, size, .. } => {
-                    (file as &mut dyn ReadSeek, *size, &**name)
                 }
+                Pfs0Meta::SubFile {
+                    file, name, size, ..
+                } => (file as &mut dyn ReadSeek, *size, &**name),
             };
 
             // Write file entry to the file entry table
-            output_writter
-                .seek(SeekFrom::Start(0x10 + (file_index * 0x18)))?;
+            output_writter.seek(SeekFrom::Start(0x10 + (file_index * 0x18)))?;
 
             output_writter.write_u64::<LittleEndian>(data_offset)?;
             output_writter.write_u64::<LittleEndian>(file_size)?;
             output_writter.write_u64::<LittleEndian>(string_offset)?;
 
             // Write the actual file content
-            output_writter
-                .seek(SeekFrom::Start(data_pos + data_offset))?;
+            output_writter.seek(SeekFrom::Start(data_pos + data_offset))?;
 
             file.seek(SeekFrom::Start(0))?;
             let size = io::copy(file, output_writter)?;
@@ -180,15 +174,13 @@ impl Pfs0 {
     }
 
     pub fn files(self) -> impl Iterator<Item = io::Result<Pfs0File>> + 'static {
-        Pfs0FileIterator {
-            pfs0: self,
-        }
+        Pfs0FileIterator { pfs0: self }
     }
 }
 
 pub struct Pfs0File {
     name: String,
-    file: Box<dyn ReadSeek + 'static>
+    file: Box<dyn ReadSeek + 'static>,
 }
 
 impl Pfs0File {
@@ -221,17 +213,11 @@ impl Iterator for Pfs0FileIterator {
             let name = meta.file_name().into();
             let file = match meta {
                 Pfs0Meta::HostPath(path) => {
-                    File::open(path)
-                        .map(|v| Box::new(v) as Box<dyn ReadSeek>)
-                },
-                Pfs0Meta::SubFile { mut file, .. } => {
-                    file.seek(SeekFrom::Start(0))
-                        .map(|_| file)
+                    File::open(path).map(|v| Box::new(v) as Box<dyn ReadSeek>)
                 }
+                Pfs0Meta::SubFile { mut file, .. } => file.seek(SeekFrom::Start(0)).map(|_| file),
             };
-            Some(file.map(|file| Pfs0File {
-                name, file
-            }))
+            Some(file.map(|file| Pfs0File { name, file }))
         } else {
             None
         }

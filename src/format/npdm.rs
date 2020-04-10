@@ -1,7 +1,7 @@
-use std::collections::HashMap;
 use crate::format::utils::HexOrNum;
-use serde_derive::{Serialize, Deserialize};
 use bit_field::BitField;
+use serde_derive::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::convert::TryFrom;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -40,13 +40,11 @@ impl KernelCapability {
                 lowest_thread_priority,
                 highest_cpu_id,
                 lowest_cpu_id,
-            } => {
-                vec![*0b111u32
-                    .set_bits( 4..10, u32::from(*lowest_thread_priority))
-                    .set_bits(10..16, u32::from(*highest_thread_priority))
-                    .set_bits(16..24, u32::from(*lowest_cpu_id))
-                    .set_bits(24..32, u32::from(*highest_cpu_id))]
-            },
+            } => vec![*0b111u32
+                .set_bits(4..10, u32::from(*lowest_thread_priority))
+                .set_bits(10..16, u32::from(*highest_thread_priority))
+                .set_bits(16..24, u32::from(*lowest_cpu_id))
+                .set_bits(24..32, u32::from(*highest_cpu_id))],
             KernelCapability::Syscalls(syscalls) => {
                 let mut masks = vec![0b1111u32; 6];
                 let mut used = [false; 6];
@@ -54,7 +52,8 @@ impl KernelCapability {
                     mask.set_bits(29..32, idx as u32);
                 }
                 for syscall_val in syscalls.values() {
-                    masks[syscall_val.0 as usize / 24].set_bit(usize::try_from((syscall_val.0 % 24) + 5).unwrap(), true);
+                    masks[syscall_val.0 as usize / 24]
+                        .set_bit(usize::try_from((syscall_val.0 % 24) + 5).unwrap(), true);
                     used[syscall_val.0 as usize / 24] = true;
                 }
                 for (idx, used) in used.iter().enumerate().rev() {
@@ -63,7 +62,7 @@ impl KernelCapability {
                     }
                 }
                 masks
-            },
+            }
             KernelCapability::Map {
                 address,
                 size,
@@ -78,36 +77,28 @@ impl KernelCapability {
                     .set_bits(7..31, u32::try_from(size.0).unwrap())
                     .set_bit(31, *is_io);
                 val
-            },
+            }
             KernelCapability::MapPage(page) => {
-                vec![*0b111_1111u32
-                    .set_bits(8..32, u32::try_from(page.0).unwrap())]
-            },
-            KernelCapability::IrqPair(irq_pair) => {
-                vec![*0b111_1111_1111u32
-                    .set_bits(12..22, u32::from(irq_pair[0]))
-                    .set_bits(22..32, u32::from(irq_pair[1]))]
-            },
+                vec![*0b111_1111u32.set_bits(8..32, u32::try_from(page.0).unwrap())]
+            }
+            KernelCapability::IrqPair(irq_pair) => vec![*0b111_1111_1111u32
+                .set_bits(12..22, u32::from(irq_pair[0]))
+                .set_bits(22..32, u32::from(irq_pair[1]))],
             KernelCapability::ApplicationType(app_type) => {
-                vec![*0b1_1111_1111_1111u32
-                    .set_bits(14..17, u32::from(*app_type))]
-            },
+                vec![*0b1_1111_1111_1111u32.set_bits(14..17, u32::from(*app_type))]
+            }
             KernelCapability::MinKernelVersion(min_kernel) => {
-                vec![*0b11_1111_1111_1111u32
-                    .set_bits(15..32, u32::try_from(min_kernel.0).unwrap())]
-            },
+                vec![*0b11_1111_1111_1111u32.set_bits(15..32, u32::try_from(min_kernel.0).unwrap())]
+            }
             KernelCapability::HandleTableSize(handle_table_size) => {
-                vec![*0b111_1111_1111_1111u32
-                    .set_bits(16..26, u32::from(*handle_table_size))]
-            },
+                vec![*0b111_1111_1111_1111u32.set_bits(16..26, u32::from(*handle_table_size))]
+            }
             KernelCapability::DebugFlags {
                 allow_debug,
                 force_debug,
-            } => {
-                vec![*0b1111_1111_1111_1111u32
-                    .set_bit(17, *allow_debug)
-                    .set_bit(18, *force_debug)]
-            },
+            } => vec![*0b1111_1111_1111_1111u32
+                .set_bit(17, *allow_debug)
+                .set_bit(18, *force_debug)],
         }
     }
 }

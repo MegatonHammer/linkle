@@ -2,11 +2,11 @@ extern crate structopt;
 
 extern crate linkle;
 
-use std::fs::{OpenOptions, File};
+use linkle::error::ResultExt;
+use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::process;
 use structopt::StructOpt;
-use linkle::error::ResultExt;
 
 #[derive(StructOpt)]
 #[structopt(name = "linkle", about = "The legendary hero")]
@@ -72,7 +72,7 @@ enum Opt {
         /// Sets the input file to use.
         input_file: String,
         /// Sets the output file to use.
-        output_file: String
+        output_file: String,
     },
     /// Create a RomFS file from a directory.
     #[structopt(name = "romfs")]
@@ -94,48 +94,82 @@ enum Opt {
         /// Key file to use
         #[structopt(parse(from_os_str), short = "k", long = "keyset")]
         keyfile: Option<PathBuf>,
-    }
+    },
 }
 
-fn create_nxo(format: &str, input_file: &str, output_file: &str, icon_file: Option<&str>, romfs_dir: Option<&str>, nacp_file: Option<&str>) -> Result<(), linkle::error::Error> {
+fn create_nxo(
+    format: &str,
+    input_file: &str,
+    output_file: &str,
+    icon_file: Option<&str>,
+    romfs_dir: Option<&str>,
+    nacp_file: Option<&str>,
+) -> Result<(), linkle::error::Error> {
     let romfs_dir = if let Some(romfs_path) = romfs_dir {
-        Some(linkle::format::romfs::RomFs::from_directory(Path::new(&romfs_path))?)
+        Some(linkle::format::romfs::RomFs::from_directory(Path::new(
+            &romfs_path,
+        ))?)
     } else {
         None
     };
     let nacp_file = if let Some(nacp_path) = nacp_file {
-        Some(linkle::format::nacp::NacpFile::from_file(&nacp_path).map_err(|err| (err, &nacp_path))?)
+        Some(
+            linkle::format::nacp::NacpFile::from_file(&nacp_path)
+                .map_err(|err| (err, &nacp_path))?,
+        )
     } else {
         None
     };
 
-    let mut nxo = linkle::format::nxo::NxoFile::from_elf(&input_file).map_err(|err| (err, &input_file))?;
+    let mut nxo =
+        linkle::format::nxo::NxoFile::from_elf(&input_file).map_err(|err| (err, &input_file))?;
     let mut option = OpenOptions::new();
     let output_option = option.write(true).create(true).truncate(true);
     match format {
         "nro" => {
-            let mut out_file = output_option.open(output_file).map_err(|err| (err, output_file))?;
-            nxo.write_nro(&mut out_file, romfs_dir, icon_file.as_ref().map(|v| &**v), nacp_file)
+            let mut out_file = output_option
+                .open(output_file)
                 .map_err(|err| (err, output_file))?;
-        },
+            nxo.write_nro(
+                &mut out_file,
+                romfs_dir,
+                icon_file.as_ref().map(|v| &**v),
+                nacp_file,
+            )
+            .map_err(|err| (err, output_file))?;
+        }
         "nso" => {
-            let mut out_file = output_option.open(output_file).map_err(|err| (err, output_file))?;
-            nxo.write_nso(&mut out_file).map_err(|err| (err, output_file))?;
+            let mut out_file = output_option
+                .open(output_file)
+                .map_err(|err| (err, output_file))?;
+            nxo.write_nso(&mut out_file)
+                .map_err(|err| (err, output_file))?;
         }
         _ => process::exit(1),
     }
     Ok(())
 }
 
-fn create_kip(input_file: &str, npdm_file: &str, output_file: &str) -> Result<(), linkle::error::Error> {
-    let mut nxo = linkle::format::nxo::NxoFile::from_elf(&input_file).map_err(|err| (err, &input_file))?;
+fn create_kip(
+    input_file: &str,
+    npdm_file: &str,
+    output_file: &str,
+) -> Result<(), linkle::error::Error> {
+    let mut nxo =
+        linkle::format::nxo::NxoFile::from_elf(&input_file).map_err(|err| (err, &input_file))?;
     let npdm = serde_json::from_reader(File::open(npdm_file).map_err(|err| (err, npdm_file))?)?;
 
     let mut option = OpenOptions::new();
     let output_option = option.write(true).create(true).truncate(true);
     output_option.open(output_file)?;
 
-    nxo.write_kip1(&mut output_option.open(output_file).map_err(|err| (err, output_file))?, &npdm).map_err(|err| (err, output_file))?;
+    nxo.write_kip1(
+        &mut output_option
+            .open(output_file)
+            .map_err(|err| (err, output_file))?,
+        &npdm,
+    )
+    .map_err(|err| (err, output_file))?;
     Ok(())
 }
 
@@ -143,7 +177,12 @@ fn create_pfs0(input_directory: &str, output_file: &str) -> Result<(), linkle::e
     let mut pfs0 = linkle::format::pfs0::Pfs0::from_directory(&input_directory)?;
     let mut option = OpenOptions::new();
     let output_option = option.write(true).create(true).truncate(true);
-    pfs0.write_pfs0(&mut output_option.open(output_file).map_err(|err| (err, output_file))?).map_err(|err| (err, output_file))?;
+    pfs0.write_pfs0(
+        &mut output_option
+            .open(output_file)
+            .map_err(|err| (err, output_file))?,
+    )
+    .map_err(|err| (err, output_file))?;
     Ok(())
 }
 
@@ -156,7 +195,7 @@ fn extract_pfs0(input_path: &str, output_directory: &str) -> Result<(), linkle::
     match std::fs::create_dir(path) {
         Ok(()) => (),
         Err(ref err) if err.kind() == std::io::ErrorKind::AlreadyExists => (),
-        Err(err) => return Err((err, path).into())
+        Err(err) => return Err((err, path).into()),
     }
     for file in pfs0.files() {
         let mut file = file?;
@@ -172,8 +211,11 @@ fn create_nacp(input_file: &str, output_file: &str) -> Result<(), linkle::error:
     let mut nacp = linkle::format::nacp::NacpFile::from_file(&input_file)?;
     let mut option = OpenOptions::new();
     let output_option = option.write(true).create(true).truncate(true);
-    let mut out_file = output_option.open(output_file).map_err(|err| (err, output_file))?;
-    nacp.write(&mut out_file).map_err(|err| (err, output_file))?;
+    let mut out_file = output_option
+        .open(output_file)
+        .map_err(|err| (err, output_file))?;
+    nacp.write(&mut out_file)
+        .map_err(|err| (err, output_file))?;
     Ok(())
 }
 
@@ -181,8 +223,12 @@ fn create_romfs(input_directory: &Path, output_file: &Path) -> Result<(), linkle
     let romfs = linkle::format::romfs::RomFs::from_directory(&input_directory)?;
     let mut option = OpenOptions::new();
     let output_option = option.write(true).create(true).truncate(true);
-    let mut out_file = output_option.open(output_file).map_err(|err| (err, output_file))?;
-    romfs.write(&mut out_file).map_err(|err| (err, output_file))?;
+    let mut out_file = output_option
+        .open(output_file)
+        .map_err(|err| (err, output_file))?;
+    romfs
+        .write(&mut out_file)
+        .map_err(|err| (err, output_file))?;
     Ok(())
 }
 
@@ -203,13 +249,45 @@ fn to_opt_ref<U: ?Sized, T: AsRef<U>>(s: &Option<T>) -> Option<&U> {
 
 fn process_args(app: &Opt) {
     let res = match app {
-        Opt::Nro { ref input_file, ref output_file, ref icon, ref romfs, ref nacp } => create_nxo("nro", input_file, output_file, to_opt_ref(icon), to_opt_ref(romfs), to_opt_ref(nacp)),
-        Opt::Nso { ref input_file, ref output_file } => create_nxo("nso", input_file, output_file, None, None, None),
-        Opt::Kip { ref input_file, ref npdm_file, ref output_file } => create_kip(input_file, npdm_file, output_file),
-        Opt::Pfs0 { ref input_directory, ref output_file } => create_pfs0(input_directory, output_file),
-        Opt::Pfs0Extract { ref input_file, ref output_directory } => extract_pfs0(input_file, output_directory),
-        Opt::Nacp { ref input_file, ref output_file } => create_nacp(input_file, output_file),
-        Opt::Romfs { ref input_directory, ref output_file } => create_romfs(input_directory, output_file),
+        Opt::Nro {
+            ref input_file,
+            ref output_file,
+            ref icon,
+            ref romfs,
+            ref nacp,
+        } => create_nxo(
+            "nro",
+            input_file,
+            output_file,
+            to_opt_ref(icon),
+            to_opt_ref(romfs),
+            to_opt_ref(nacp),
+        ),
+        Opt::Nso {
+            ref input_file,
+            ref output_file,
+        } => create_nxo("nso", input_file, output_file, None, None, None),
+        Opt::Kip {
+            ref input_file,
+            ref npdm_file,
+            ref output_file,
+        } => create_kip(input_file, npdm_file, output_file),
+        Opt::Pfs0 {
+            ref input_directory,
+            ref output_file,
+        } => create_pfs0(input_directory, output_file),
+        Opt::Pfs0Extract {
+            ref input_file,
+            ref output_directory,
+        } => extract_pfs0(input_file, output_directory),
+        Opt::Nacp {
+            ref input_file,
+            ref output_file,
+        } => create_nacp(input_file, output_file),
+        Opt::Romfs {
+            ref input_directory,
+            ref output_file,
+        } => create_romfs(input_directory, output_file),
         Opt::Keygen { dev, ref keyfile } => print_keys(*dev, to_opt_ref(keyfile)),
     };
 
