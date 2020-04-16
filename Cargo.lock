@@ -150,8 +150,8 @@ dependencies = [
 
 [[package]]
 name = "blz-nx"
-version = "0.1.0"
-source = "git+https://github.com/Thog/blz-nx-rs#7e2dccf2a3e1ccb52408e1db995e8f3971de4f2c"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "byteorder 1.2.3 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -205,10 +205,9 @@ dependencies = [
 
 [[package]]
 name = "cargo_metadata"
-version = "0.6.0"
-source = "git+https://github.com/roblabla/cargo_metadata#8e2f400d2464f4bd4b5f9005c7201123a22bed2b"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
- "error-chain 0.12.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "semver 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde 1.0.106 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde_derive 1.0.106 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -317,14 +316,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "error-chain"
-version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-dependencies = [
- "backtrace 0.3.9 (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
 name = "failure"
 version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -424,15 +415,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "linkle"
-version = "0.2.8"
+version = "0.2.9"
 dependencies = [
  "aes 0.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "bit_field 0.10.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "block-modes 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "blz-nx 0.1.0 (git+https://github.com/Thog/blz-nx-rs)",
+ "blz-nx 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "byteorder 1.2.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "cargo-toml2 1.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "cargo_metadata 0.6.0 (git+https://github.com/roblabla/cargo_metadata)",
+ "cargo_metadata 0.9.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "clap 2.32.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "cmac 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "derive_more 0.13.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -444,6 +435,7 @@ dependencies = [
  "num-traits 0.2.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "rust-ini 0.13.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "scroll 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "semver 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde 1.0.106 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde_derive 1.0.106 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde_json 1.0.39 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -925,7 +917,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 "checksum block-cipher-trait 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)" = "1c924d49bd09e7c06003acda26cd9742e796e34282ec6c1189404dee0c1f4774"
 "checksum block-modes 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)" = "283fa06a14026feac8912bf35328fc074f5d68907fd4b9cccad5658a3fc62a30"
 "checksum block-padding 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)" = "4fc4358306e344bf9775d0197fd00d2603e5afb0771bb353538630f022068ea3"
-"checksum blz-nx 0.1.0 (git+https://github.com/Thog/blz-nx-rs)" = "<none>"
+"checksum blz-nx 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)" = "c7fdb1b8afc62dd91f33496ef989fa5706c81c1cb9817d346dba2417e616e5f7"
 "checksum byte-tools 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)" = "560c32574a12a89ecd91f5e742165893f86e3ab98d21f8ea548658eb9eef5f40"
 "checksum byte-tools 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)" = "980479e6fde23246dfb54d47580d66b4e99202e7579c5eaa9fe10ecb5ebd2182"
 "checksum bytecount 0.3.2 (registry+https://github.com/rust-lang/crates.io-index)" = "f861d9ce359f56dbcb6e0c2a1cb84e52ad732cadb57b806adeb3c7668caccbd8"
@@ -933,7 +925,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 "checksum byteorder 1.2.3 (registry+https://github.com/rust-lang/crates.io-index)" = "74c0b906e9446b0a2e4f760cdb3fa4b2c48cdc6db8766a845c54b6ff063fd2e9"
 "checksum cargo-toml2 1.3.2 (registry+https://github.com/rust-lang/crates.io-index)" = "22b689b002fa6142753b431e1414d0336065b692e1d0e400504698f75997817d"
 "checksum cargo_metadata 0.5.8 (registry+https://github.com/rust-lang/crates.io-index)" = "1efca0b863ca03ed4c109fb1c55e0bc4bbeb221d3e103d86251046b06a526bd0"
-"checksum cargo_metadata 0.6.0 (git+https://github.com/roblabla/cargo_metadata)" = "<none>"
+"checksum cargo_metadata 0.9.1 (registry+https://github.com/rust-lang/crates.io-index)" = "46e3374c604fb39d1a2f35ed5e4a4e30e60d01fab49446e08f1b3e9a90aef202"
 "checksum cc 1.0.50 (registry+https://github.com/rust-lang/crates.io-index)" = "95e28fa049fda1c330bcf9d723be7663a899c4679724b34c81e9f5a326aab8cd"
 "checksum cfg-if 0.1.10 (registry+https://github.com/rust-lang/crates.io-index)" = "4785bdd1c96b2a846b2bd7cc02e86b6b3dbf14e7e53446c4f54c92a361040822"
 "checksum clap 2.32.0 (registry+https://github.com/rust-lang/crates.io-index)" = "b957d88f4b6a63b9d70d5f454ac8011819c6efa7727858f458ab71c756ce2d3e"
@@ -946,7 +938,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 "checksum dirs 1.0.4 (registry+https://github.com/rust-lang/crates.io-index)" = "88972de891f6118092b643d85a0b28e0678e0f948d7f879aa32f2d5aafe97d2a"
 "checksum elf 0.0.10 (registry+https://github.com/rust-lang/crates.io-index)" = "4841de15dbe0e49b9b62a417589299e3be0d557e0900d36acb87e6dae47197f5"
 "checksum error-chain 0.11.0 (registry+https://github.com/rust-lang/crates.io-index)" = "ff511d5dc435d703f4971bc399647c9bc38e20cb41452e3b9feb4765419ed3f3"
-"checksum error-chain 0.12.0 (registry+https://github.com/rust-lang/crates.io-index)" = "07e791d3be96241c77c43846b665ef1384606da2cd2a48730abe606a12906e02"
 "checksum failure 0.1.3 (registry+https://github.com/rust-lang/crates.io-index)" = "6dd377bcc1b1b7ce911967e3ec24fa19c3224394ec05b54aa7b083d498341ac7"
 "checksum failure_derive 0.1.3 (registry+https://github.com/rust-lang/crates.io-index)" = "64c2d913fe8ed3b6c6518eedf4538255b989945c14c2a7d5cbff62a5e2120596"
 "checksum fake-simd 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)" = "e88a8acf291dafb59c2d96e8f59828f3838bb1a70398823ade51a84de6a6deed"

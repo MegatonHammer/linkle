@@ -1,6 +1,6 @@
 [package]
 name = "linkle"
-version = "0.2.8"
+version = "0.2.9"
 authors = ["Thog <contact@thog.eu>"]
 license = "MIT/Apache-2.0"
 homepage = "https://github.com/MegatonHammer/linkle/"
@@ -28,7 +28,8 @@ scroll = { version = "0.9.0", optional = true }
 serde = "1"
 serde_derive = "1"
 serde_json = "1"
-cargo_metadata = { git = "https://github.com/roblabla/cargo_metadata", optional = true }
+cargo_metadata = { version = "0.9.1", optional = true }
+semver = {version = "0.9.0", optional = true }
 url = "1.7.1"
 goblin = { version = "0.0.17", optional = true }
 rust-ini = "0.13"
@@ -39,9 +40,9 @@ aes = "0.3"
 num-traits = "0.2"
 derive_more = "0.13"
 cmac = "0.2.0"
-blz-nx = { git = "https://github.com/Thog/blz-nx-rs" }
+blz-nx = "1.0.1"
 bit_field = "0.10.0"
 cargo-toml2 = { version = "1.3.2", optional = true }
 
 [features]
-binaries = ["structopt", "cargo_metadata", "scroll", "goblin", "clap", "cargo-toml2"]
+binaries = ["structopt", "cargo_metadata", "semver", "scroll", "goblin", "clap", "cargo-toml2"]

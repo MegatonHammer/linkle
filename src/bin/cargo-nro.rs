@@ -99,10 +99,13 @@ const CARGO_OPTIONS: &str = "CARGO OPTIONS:
 
 fn get_metadata(
     manifest_path: &Path,
-    package_id: &str,
+    package_id: cargo_metadata::PackageId,
     target_name: &str,
 ) -> (Package, PackageMetadata) {
-    let metadata = cargo_metadata::metadata(Some(&manifest_path)).unwrap();
+    let mut cmd = cargo_metadata::MetadataCommand::new();
+    cmd.manifest_path(manifest_path);
+
+    let metadata = cmd.exec().unwrap();
 
     let package = metadata
         .packages
@@ -256,6 +259,29 @@ struct PackageMetadata {
     title_id: Option<String>,
 }
 
+trait WorkspaceMember {
+    fn part(&self, n: usize) -> &str;
+
+    fn name(&self) -> &str {
+        self.part(0)
+    }
+
+    fn version(&self) -> semver::Version {
+        semver::Version::parse(self.part(1)).expect("bad version in cargo metadata")
+    }
+
+    fn url(&self) -> &str {
+        let url = self.part(2);
+        &url[1..url.len() - 1]
+    }
+}
+
+impl WorkspaceMember for cargo_metadata::PackageId {
+    fn part(&self, n: usize) -> &str {
+        self.repr.splitn(3, ' ').nth(n).unwrap()
+    }
+}
+
 fn main() {
     let args = if env::args().nth(1) == Some("nro".to_string()) {
         // Skip the subcommand when running through cargo
@@ -313,7 +339,7 @@ fn main() {
 
     let command = command.spawn().unwrap();
 
-    let iter = cargo_metadata::parse_message_stream(command.stdout.unwrap());
+    let iter = cargo_metadata::parse_messages(command.stdout.unwrap());
     for message in iter {
         match message {
             Ok(Message::CompilerArtifact(ref artifact))
@@ -341,7 +367,7 @@ fn main() {
                 let manifest = root.join("Cargo.toml");
 
                 let (package, target_metadata) =
-                    get_metadata(&manifest, &artifact.package_id.raw, &artifact.target.name);
+                    get_metadata(&manifest, artifact.package_id.clone(), &artifact.target.name);
 
                 let romfs = if let Some(romfs) = target_metadata.romfs {
                     let romfs_path = root.join(romfs);
@@ -375,7 +401,7 @@ fn main() {
                 let mut nacp = target_metadata.nacp.unwrap_or_default();
                 nacp.name.get_or_insert(package.name);
                 nacp.author.get_or_insert(package.authors[0].clone());
-                nacp.version.get_or_insert(package.version);
+                nacp.version.get_or_insert(package.version.to_string());
                 if nacp.title_id.is_none() {
                     nacp.title_id = target_metadata.title_id;
                 }
@@ -386,7 +412,7 @@ fn main() {
                 let mut new_name = PathBuf::from(artifact.filenames[0].clone());
                 assert!(new_name.set_extension("nro"));
 
-                NxoFile::from_elf(&artifact.filenames[0])
+                NxoFile::from_elf(artifact.filenames[0].to_str().unwrap())
                     .unwrap()
                     .write_nro(
                         &mut File::create(new_name.clone()).unwrap(),
