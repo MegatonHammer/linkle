@@ -288,7 +288,7 @@ fn main() {
         .args(&[
             "build",
             &format!("--target={}", target),
-            "--message-format=json",
+            "--message-format=json-diagnostic-rendered-ansi",
         ])
         .stdout(Stdio::piped())
         .env("RUST_TARGET_PATH", rust_target_path.as_os_str());
@@ -306,16 +306,24 @@ fn main() {
                 if artifact.target.kind.contains(&"bin".into())
                     || artifact.target.kind.contains(&"cdylib".into()) =>
             {
-                let package: &Package = match metadata.packages.iter().find(|v| v.id == artifact.package_id) {
+                let package: &Package = match metadata
+                    .packages
+                    .iter()
+                    .find(|v| v.id == artifact.package_id)
+                {
                     Some(v) => v,
-                    None => continue
+                    None => continue,
                 };
 
                 let root = package.manifest_path.parent().unwrap();
-                let target_metadata : PackageMetadata = serde_json::from_value(package.metadata
-                    .pointer(&format!("linkle/{}", artifact.target.name))
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null)).unwrap_or_default();
+                let target_metadata: PackageMetadata = serde_json::from_value(
+                    package
+                        .metadata
+                        .pointer(&format!("linkle/{}", artifact.target.name))
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null),
+                )
+                .unwrap_or_default();
 
                 let romfs = if let Some(romfs) = target_metadata.romfs {
                     let romfs_path = root.join(romfs);
