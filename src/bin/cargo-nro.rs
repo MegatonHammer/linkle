@@ -357,7 +357,7 @@ fn main() {
                 let romfs =
                     generate_debuginfo_romfs(Path::new(&artifact.filenames[0]), romfs).unwrap();
 
-                let mut new_name = PathBuf::from(artifact.filenames[0].clone());
+                let mut new_name = artifact.filenames[0].clone();
                 assert!(new_name.set_extension("nro"));
 
                 NxoFile::from_elf(artifact.filenames[0].to_str().unwrap())
