@@ -3,7 +3,6 @@ extern crate clap;
 extern crate linkle;
 extern crate serde;
 extern crate serde_json;
-extern crate url;
 #[macro_use]
 extern crate serde_derive;
 extern crate cargo_metadata;
@@ -26,7 +25,6 @@ use failure::Fail;
 use goblin::elf::section_header::{SHT_NOBITS, SHT_STRTAB, SHT_SYMTAB};
 use goblin::elf::{Elf, Header as ElfHeader, ProgramHeader};
 use linkle::format::{nacp::NacpFile, nxo::NxoFile, romfs::RomFs};
-use url::Url;
 
 #[derive(Debug, Fail, Display)]
 enum Error {
@@ -52,15 +50,6 @@ impl From<std::io::Error> for Error {
     fn from(from: std::io::Error) -> Error {
         linkle::error::Error::from(from).into()
     }
-}
-
-fn find_project_root(path: &Path) -> Option<&Path> {
-    for parent in path.ancestors() {
-        if parent.join("Cargo.toml").is_file() {
-            return Some(parent);
-        }
-    }
-    None
 }
 
 // TODO: Run cargo build --help to get the list of options!
@@ -96,32 +85,6 @@ const CARGO_OPTIONS: &str = "CARGO OPTIONS:
         --locked                    Require Cargo.lock is up to date
     -Z <FLAG>...                    Unstable (nightly-only) flags to Cargo, see 'cargo -Z help' for details
     -h, --help                      Prints help information";
-
-fn get_metadata(
-    manifest_path: &Path,
-    package_id: cargo_metadata::PackageId,
-    target_name: &str,
-) -> (Package, PackageMetadata) {
-    let mut cmd = cargo_metadata::MetadataCommand::new();
-    cmd.manifest_path(manifest_path);
-
-    let metadata = cmd.exec().unwrap();
-
-    let package = metadata
-        .packages
-        .into_iter()
-        .find(|v| v.id == package_id)
-        .unwrap();
-    let package_metadata = serde_json::from_value(
-        package
-            .metadata
-            .pointer(&format!("linkle/{}", target_name))
-            .cloned()
-            .unwrap_or(serde_json::Value::Null),
-    )
-    .unwrap_or_default();
-    (package, package_metadata)
-}
 
 trait BetterIOWrite<Ctx: Copy>: IOwrite<Ctx> {
     fn iowrite_with_try<
@@ -300,13 +263,10 @@ fn main() {
         .after_help(CARGO_OPTIONS)
         .get_matches_from(args);
 
+    let metadata = cargo_metadata::MetadataCommand::new().exec().unwrap();
+
     let rust_target_path = match env::var("RUST_TARGET_PATH") {
-        Err(VarError::NotPresent) => {
-            // TODO: Handle workspace
-            find_project_root(&env::current_dir().unwrap())
-                .unwrap()
-                .into()
-        }
+        Err(VarError::NotPresent) => metadata.workspace_root.clone(),
         s => PathBuf::from(s.unwrap()),
     };
 
@@ -346,28 +306,16 @@ fn main() {
                 if artifact.target.kind.contains(&"bin".into())
                     || artifact.target.kind.contains(&"cdylib".into()) =>
             {
-                // Find the artifact's source. This is not going to be pretty.
-                // For whatever reason, cargo thought it'd be a *great idea* to make file URLs use
-                // the non-standard "path+file:///" scheme, instead of, y'know, the ""file:///" everyone
-                // knows.
-                //
-                // So we check if it starts with path+file, and if it does, we skip the path+ part when
-                // parsing it.
-                let url = if artifact.package_id.url().starts_with("path+file") {
-                    &artifact.package_id.url()["path+".len()..]
-                } else {
-                    artifact.package_id.url()
+                let package: &Package = match metadata.packages.iter().find(|v| v.id == artifact.package_id) {
+                    Some(v) => v,
+                    None => continue
                 };
-                let url = Url::parse(url).unwrap();
-                if url.scheme() != "file" {
-                    continue;
-                }
 
-                let root = url.to_file_path().unwrap();
-                let manifest = root.join("Cargo.toml");
-
-                let (package, target_metadata) =
-                    get_metadata(&manifest, artifact.package_id.clone(), &artifact.target.name);
+                let root = package.manifest_path.parent().unwrap();
+                let target_metadata : PackageMetadata = serde_json::from_value(package.metadata
+                    .pointer(&format!("linkle/{}", artifact.target.name))
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null)).unwrap_or_default();
 
                 let romfs = if let Some(romfs) = target_metadata.romfs {
                     let romfs_path = root.join(romfs);
@@ -399,7 +347,7 @@ fn main() {
                 let icon_file = icon_file.as_ref().map(|v| v.as_ref());
 
                 let mut nacp = target_metadata.nacp.unwrap_or_default();
-                nacp.name.get_or_insert(package.name);
+                nacp.name.get_or_insert(package.name.clone());
                 nacp.author.get_or_insert(package.authors[0].clone());
                 nacp.version.get_or_insert(package.version.to_string());
                 if nacp.title_id.is_none() {
