@@ -11,8 +11,15 @@ homebrew.
 
 # Installation
 
-Assuming you have `cargo` installed, `cargo install --features=binaries --git https://github.com/MegatonHammer/linkle`
-will install this program, by the command name `linkle` and the `cargo nro` subcommand.
+## Source Installation
+
+Assuming you have `cargo` installed, `cargo install --features=binaries linkle`
+will install `linkle` and the `cargo nro` subcommand.
+
+## Binary Installation
+
+Alternatively, you can download the `linkle` binary for Windows, MacOS and Linux
+ARM64 in the [Github Releases](https://github.com/MegatonHammer/linkle/releases).
 
 # Usage
 
