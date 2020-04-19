@@ -405,7 +405,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "linkle"
-version = "0.2.9"
+version = "0.2.10"
 dependencies = [
  "aes 0.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "bit_field 0.10.0 (registry+https://github.com/rust-lang/crates.io-index)",
