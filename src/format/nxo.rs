@@ -4,6 +4,7 @@ use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use elf;
 use elf::types::{Machine, ProgramHeader, SectionHeader, EM_AARCH64, EM_ARM, PT_LOAD, SHT_NOTE};
 use serde_derive::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std;
 use std::convert::{TryFrom, TryInto};
 use std::fs::File;
@@ -52,6 +53,8 @@ fn write_build_id<T>(
     build_id: &Option<Vec<u8>>,
     output_writter: &mut T,
     text_data: &[u8],
+    rodata: &[u8],
+    data: &[u8],
 ) -> std::io::Result<()>
 where
     T: Write,
@@ -70,7 +73,12 @@ where
             output_writter.write_all(&build_id_data[0x10..])?;
         }
         None => {
-            output_writter.write_all(&utils::calculate_sha256(text_data)?[..0x20])?;
+            let mut hasher = Sha256::default();
+            hasher.input(text_data);
+            hasher.input(rodata);
+            hasher.input(data);
+
+            output_writter.write_all(&hasher.result().as_slice()[..0x20])?;
         }
     }
     Ok(())
@@ -304,7 +312,7 @@ impl NxoFile {
         // Reserved
         output_writter.write_u32::<LittleEndian>(0)?;
 
-        write_build_id(&self.build_id, output_writter, &code)?;
+        write_build_id(&self.build_id, output_writter, &code, &rodata, &data)?;
 
         // TODO: DSO Module Offset (unused)
         output_writter.write_u32::<LittleEndian>(0)?;
@@ -559,7 +567,7 @@ impl NxoFile {
             }
         }
 
-        write_build_id(&self.build_id, output_writter, &code)?;
+        write_build_id(&self.build_id, output_writter, &code, &rodata, &data)?;
 
         // Compressed size
         output_writter.write_u32::<LittleEndian>(compressed_code_size)?;
