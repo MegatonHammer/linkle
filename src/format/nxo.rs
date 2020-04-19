@@ -48,7 +48,7 @@ fn pad_segment(previous_segment_data: &mut Vec<u8>, offset: usize, segment: &Pro
     }
 }
 
-fn write_build_id<T>(build_id: &Option<Vec<u8>>, output_writter: &mut T) -> std::io::Result<()>
+fn write_build_id<T>(build_id: &Option<Vec<u8>>, output_writter: &mut T, text_data: &[u8]) -> std::io::Result<()>
 where
     T: Write,
 {
@@ -66,7 +66,7 @@ where
             output_writter.write_all(&build_id_data[0x10..])?;
         }
         None => {
-            output_writter.write_all(&[0; 0x20])?;
+            output_writter.write_all(&utils::calculate_sha256(text_data)?[..0x20])?;
         }
     }
     Ok(())
@@ -300,7 +300,7 @@ impl NxoFile {
         // Reserved
         output_writter.write_u32::<LittleEndian>(0)?;
 
-        write_build_id(&self.build_id, output_writter)?;
+        write_build_id(&self.build_id, output_writter, &code)?;
 
         // TODO: DSO Module Offset (unused)
         output_writter.write_u32::<LittleEndian>(0)?;
@@ -555,7 +555,7 @@ impl NxoFile {
             }
         }
 
-        write_build_id(&self.build_id, output_writter)?;
+        write_build_id(&self.build_id, output_writter, &code)?;
 
         // Compressed size
         output_writter.write_u32::<LittleEndian>(compressed_code_size)?;
