@@ -234,9 +234,9 @@ fn create_romfs(input_directory: &Path, output_file: &Path) -> Result<(), linkle
 
 fn print_keys(is_dev: bool, key_path: Option<&Path>) -> Result<(), linkle::error::Error> {
     let keys = if is_dev {
-        linkle::pki::Keys::new_retail(key_path).unwrap()
-    } else {
         linkle::pki::Keys::new_dev(key_path).unwrap()
+    } else {
+        linkle::pki::Keys::new_retail(key_path).unwrap()
     };
 
     keys.write(&mut std::io::stdout()).unwrap();
