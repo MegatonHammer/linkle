@@ -249,7 +249,7 @@ macro_rules! make_key_macros_write {
                                 continue;
                             }
                         }
-                        for line in $doc.split("\n") {
+                        for line in $doc.split('\n') {
                             writeln!($w, "; {}", line)?;
                         }
                         writeln!($w, "{} = {}", stringify!($keyname), key)?;
@@ -279,7 +279,7 @@ macro_rules! make_key_macros_write {
                                 //println!("Can't skip {}, need {}, have {}", stringify!($keyname), total, count);
                             }
                         }
-                        for line in $doc.split("\n") {
+                        for line in $doc.split('\n') {
                             writeln!($w, "; {}", line)?;
                         }
                         writeln!($w, "{} = {}", stringify!($keyname), key)?;
@@ -316,7 +316,7 @@ macro_rules! make_key_macros_write {
                                 name.pop();
                             }
                             if first {
-                                for line in $doc.split("\n") {
+                                for line in $doc.split('\n') {
                                     writeln!($w, "; {}", line)?;
                                 }
                                 first = false;
@@ -343,7 +343,7 @@ macro_rules! make_key_macros_write {
                                 name.pop();
                             }
                             if first {
-                                for line in $doc.split("\n") {
+                                for line in $doc.split('\n') {
                                     writeln!($w, "; {}", line)?;
                                 }
                                 first = false;
@@ -370,7 +370,7 @@ macro_rules! make_key_macros_write {
                                 name.pop();
                             }
                             if first {
-                                for line in $doc.split("\n") {
+                                for line in $doc.split('\n') {
                                     writeln!($w, "; {}", line)?;
                                 }
                                 first = false;
@@ -924,12 +924,19 @@ impl Keys {
     }
 
     #[allow(clippy::cognitive_complexity)]
-    pub fn write<W: Write>(&self, w: &mut W, console_unique: bool, minimal: bool) -> io::Result<()> {
+    pub fn write<W: Write>(
+        &self,
+        w: &mut W,
+        console_unique: bool,
+        minimal: bool,
+    ) -> io::Result<()> {
         make_key_macros_write!($, self, w, console_unique, minimal);
         keys!(self);
         Ok(())
     }
 
+    #[allow(clippy::cognitive_complexity)]
+    #[allow(clippy::single_match)]
     pub fn derive_keys(&mut self) -> Result<(), Error> {
         for i in 0..6 {
             /* Derive the keyblob_keys */
@@ -960,7 +967,7 @@ impl Keys {
             (Some(keyblob_key), Some(per_console_key_source)) => {
                 self.device_key = Some(keyblob_key.derive_key(&per_console_key_source.0)?);
             }
-            _ => ()
+            _ => (),
         }
         for i in 0..6 {
             match (
@@ -1003,21 +1010,23 @@ impl Keys {
             // Derive new 6.2.0+ keks
             match (&self.tsec_root_kek, &self.tsec_auth_signatures[i - 6]) {
                 (Some(tsec_root_kek), Some(tsec_auth_signature)) => {
-                    self.tsec_root_key[i - 6] = Some(tsec_root_kek.derive_key(&tsec_auth_signature.0)?);
+                    self.tsec_root_key[i - 6] =
+                        Some(tsec_root_kek.derive_key(&tsec_auth_signature.0)?);
                 }
-                _ => ()
+                _ => (),
             }
             match (&self.package1_mac_kek, &self.tsec_auth_signatures[i - 6]) {
                 (Some(package1_mac_kek), Some(tsec_auth_signature)) => {
-                    self.package1_mac_keys[i] = Some(package1_mac_kek.derive_key(&tsec_auth_signature.0)?);
+                    self.package1_mac_keys[i] =
+                        Some(package1_mac_kek.derive_key(&tsec_auth_signature.0)?);
                 }
-                _ => ()
+                _ => (),
             }
             match (&self.package1_kek, &self.tsec_auth_signatures[i - 6]) {
                 (Some(package1_kek), Some(tsec_auth_signature)) => {
                     self.package1_keys[i] = Some(package1_kek.derive_key(&tsec_auth_signature.0)?);
                 }
-                _ => ()
+                _ => (),
             }
         }
         for i in 6..0x20 {
@@ -1031,14 +1040,18 @@ impl Keys {
         }
         for i in 0..0x20 {
             /* Derive master keks with mariko keydata */
-            match (&self.mariko_kek, &mut self.mariko_master_kek_sources[i], &mut self.master_keks[i]) {
+            match (
+                &self.mariko_kek,
+                &mut self.mariko_master_kek_sources[i],
+                &mut self.master_keks[i],
+            ) {
                 (Some(mariko_kek), Some(mariko_master_kek_sources), ref mut master_kek @ None) => {
                     **master_kek = Some(mariko_kek.derive_key(&mariko_master_kek_sources.0)?)
-                },
+                }
                 (Some(mariko_kek), ref mut mariko_master_kek_sources @ None, Some(master_kek)) => {
                     **mariko_master_kek_sources = Some(mariko_kek.generate_kek(&master_kek.0)?)
                 }
-                _ => ()
+                _ => (),
             }
         }
         for i in 0..0x20 {
@@ -1179,16 +1192,26 @@ impl Keys {
             }
 
             // Derive Save MAC key
-            match (&self.device_key, &self.save_mac_kek_source, &self.aes_kek_generation_source, &self.save_mac_key_source) {
-                (Some(device_key), Some(save_mac_kek_source), Some(aes_kek_generation_source), Some(save_mac_key_source)) => {
+            match (
+                &self.device_key,
+                &self.save_mac_kek_source,
+                &self.aes_kek_generation_source,
+                &self.save_mac_key_source,
+            ) {
+                (
+                    Some(device_key),
+                    Some(save_mac_kek_source),
+                    Some(aes_kek_generation_source),
+                    Some(save_mac_key_source),
+                ) => {
                     self.save_mac_key = Some(generate_kek(
                         save_mac_kek_source,
                         device_key,
                         aes_kek_generation_source,
-                        save_mac_key_source
+                        save_mac_key_source,
                     )?);
-                },
-                _ => ()
+                }
+                _ => (),
             }
         }
         Ok(())

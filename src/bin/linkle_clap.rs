@@ -240,14 +240,20 @@ fn create_romfs(input_directory: &Path, output_file: &Path) -> Result<(), linkle
     Ok(())
 }
 
-fn print_keys(is_dev: bool, key_path: Option<&Path>, console_unique: bool, minimal: bool) -> Result<(), linkle::error::Error> {
+fn print_keys(
+    is_dev: bool,
+    key_path: Option<&Path>,
+    console_unique: bool,
+    minimal: bool,
+) -> Result<(), linkle::error::Error> {
     let keys = if is_dev {
         linkle::pki::Keys::new_dev(key_path).unwrap()
     } else {
         linkle::pki::Keys::new_retail(key_path).unwrap()
     };
 
-    keys.write(&mut std::io::stdout(), console_unique, minimal).unwrap();
+    keys.write(&mut std::io::stdout(), console_unique, minimal)
+        .unwrap();
     Ok(())
 }
 
@@ -296,7 +302,12 @@ fn process_args(app: &Opt) {
             ref input_directory,
             ref output_file,
         } => create_romfs(input_directory, output_file),
-        Opt::Keygen { dev, ref keyfile, show_console_unique, minimal } => print_keys(*dev, to_opt_ref(keyfile), *show_console_unique, *minimal),
+        Opt::Keygen {
+            dev,
+            ref keyfile,
+            show_console_unique,
+            minimal,
+        } => print_keys(*dev, to_opt_ref(keyfile), *show_console_unique, *minimal),
     };
 
     if let Err(e) = res {
