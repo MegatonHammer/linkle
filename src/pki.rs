@@ -104,6 +104,15 @@ impl Aes128Key {
         Ok(Aes128Key(newkey))
     }
 
+    fn generate_kek(&self, key: &[u8; 0x10]) -> Result<Aes128Key, Error> {
+        let mut newkey = *key;
+
+        let crypter = Aes128::new(GenericArray::from_slice(&self.0));
+        crypter.encrypt_block(GenericArray::from_mut_slice(&mut newkey));
+
+        Ok(Aes128Key(newkey))
+    }
+
     fn derive_xts_key(&self, source: &[u8; 0x20]) -> Result<AesXtsKey, Error> {
         let mut newkey = *source;
 
@@ -168,20 +177,31 @@ impl<T> OptionExt for Option<T> {
 pub struct Keys {
     secure_boot_key: Option<Aes128Key>,
     tsec_key: Option<Aes128Key>,
+    device_key: Option<Aes128Key>,
     keyblob_keys: [Option<Aes128Key>; 0x20],
     keyblob_mac_keys: [Option<Aes128Key>; 0x20],
     encrypted_keyblobs: [Option<EncryptedKeyblob>; 0x20],
+    mariko_aes_class_keys: [Option<Aes128Key>; 0xC],
+    mariko_kek: Option<Aes128Key>,
+    mariko_bek: Option<Aes128Key>,
     keyblobs: [Option<Keyblob>; 0x20],
     keyblob_key_sources: [Option<Aes128Key>; 0x20],
     keyblob_mac_key_source: Option<Aes128Key>,
+    tsec_root_kek: Option<Aes128Key>,
+    package1_mac_kek: Option<Aes128Key>,
+    package1_kek: Option<Aes128Key>,
+    tsec_auth_signatures: [Option<Aes128Key>; 0x20],
     tsec_root_key: [Option<Aes128Key>; 0x20],
     master_kek_sources: [Option<Aes128Key>; 0x20],
+    mariko_master_kek_sources: [Option<Aes128Key>; 0x20],
     master_keks: [Option<Aes128Key>; 0x20],
     master_key_source: Option<Aes128Key>,
     master_keys: [Option<Aes128Key>; 0x20],
+    package1_mac_keys: [Option<Aes128Key>; 0x20],
     package1_keys: [Option<Aes128Key>; 0x20],
     package2_keys: [Option<Aes128Key>; 0x20],
     package2_key_source: Option<Aes128Key>,
+    per_console_key_source: Option<Aes128Key>,
     aes_kek_generation_source: Option<Aes128Key>,
     aes_key_generation_source: Option<Aes128Key>,
     key_area_key_application_source: Option<Aes128Key>,
@@ -200,6 +220,8 @@ pub struct Keys {
     key_area_key_application: [Option<Aes128Key>; 0x20],
     key_area_key_ocean: [Option<Aes128Key>; 0x20],
     key_area_key_system: [Option<Aes128Key>; 0x20],
+    xci_header_key: Option<Aes128Key>,
+    save_mac_key: Option<Aes128Key>,
     sd_card_save_key: Option<AesXtsKey>,
     sd_card_nca_key: Option<AesXtsKey>,
     nca_hdr_fixed_key_modulus: [Option<Modulus>; 2],
@@ -208,63 +230,156 @@ pub struct Keys {
 }
 
 macro_rules! make_key_macros_write {
-    ($self:ident, $w:ident) => {
+    ($d:tt, $self:ident, $w:ident, $show_console_unique:expr, $minimal:expr) => {
         macro_rules! single_key {
-            ($keyname:tt) => {
-                if let Some(key) = &$self.$keyname {
-                    writeln!($w, "{} = {}", stringify!($keyname), key)?;
+            ($keyname:tt, $doc:expr, $console_unique:expr, [$d ($parent:expr),*]) => {
+                if $show_console_unique || !$console_unique {
+                    #[allow(unused_mut)]
+                    for key in &$self.$keyname {
+                        if $minimal {
+                            let mut count = 0;
+                            let mut total = 0;
+                            $d (
+                                total += 1;
+                                if $parent.is_some() {
+                                    count += 1;
+                                }
+                            )*
+                            if count == total && total != 0 {
+                                continue;
+                            }
+                        }
+                        for line in $doc.split('\n') {
+                            writeln!($w, "; {}", line)?;
+                        }
+                        writeln!($w, "{} = {}", stringify!($keyname), key)?;
+                    }
                 }
             };
         }
 
         macro_rules! single_key_xts {
-            ($keyname:tt) => {
-                if let Some(key) = &$self.$keyname {
-                    writeln!($w, "{} = {}", stringify!($keyname), key)?;
+            ($keyname:tt, $doc:expr, $console_unique:expr, [$d ($parent:expr),*]) => {
+                if $show_console_unique || !$console_unique {
+                    #[allow(unused_mut)]
+                    for key in &$self.$keyname {
+                        if $minimal {
+                            let mut count = 0;
+                            let mut total = 0;
+                            $d (
+                                total += 1;
+                                if $parent.is_some() {
+                                    count += 1;
+                                }
+                            )*
+                            if count == total && total != 0 {
+                                continue;
+                                //println!("Skipping {}", stringify!($keyname));
+                            } else if total != 0 {
+                                //println!("Can't skip {}, need {}, have {}", stringify!($keyname), total, count);
+                            }
+                        }
+                        for line in $doc.split('\n') {
+                            writeln!($w, "; {}", line)?;
+                        }
+                        writeln!($w, "{} = {}", stringify!($keyname), key)?;
+                    }
                 }
             };
         }
 
         macro_rules! multi_key {
-            ($keyname:tt) => {
-                for (idx, v) in $self.$keyname.iter().enumerate() {
-                    if let Some(key) = v {
-                        // remove trailing s
-                        let mut name = String::from(stringify!($keyname));
-                        if name.bytes().last() == Some(b's') {
-                            name.pop();
+            ($keyname:tt, $doc:expr, $console_unique:expr, $idx:ident => $d ([$d ($parent:expr),*]),*) => {
+                let mut first = true;
+                if $show_console_unique || !$console_unique {
+                    #[allow(unused_mut)]
+                    for ($idx, v) in $self.$keyname.iter().enumerate() {
+                        if $minimal {
+                            $d (
+                                let mut count = 0;
+                                let mut total = 0;
+                                $d (
+                                    total += 1;
+                                    if $parent.is_some() {
+                                        count += 1;
+                                    }
+                                )*
+                                if count == total && total != 0 {
+                                    continue;
+                                }
+                            )*
                         }
-                        writeln!($w, "{}_{:02x} = {}", name, idx, key)?;
+                        if let Some(key) = v {
+                            // remove trailing s
+                            let mut name = String::from(stringify!($keyname));
+                            if name.bytes().last() == Some(b's') {
+                                name.pop();
+                            }
+                            if first {
+                                for line in $doc.split('\n') {
+                                    writeln!($w, "; {}", line)?;
+                                }
+                                first = false;
+                            }
+                            writeln!($w, "{}_{:02x} = {}", name, $idx, key)?;
+                        }
+                    }
+                    if !first {
+                        writeln!($w)?;
                     }
                 }
             };
         }
 
         macro_rules! multi_keyblob {
-            ($keyname:tt) => {
-                for (idx, v) in $self.$keyname.iter().enumerate() {
-                    if let Some(key) = v {
-                        // remove trailing s
-                        let mut name = String::from(stringify!($keyname));
-                        if name.bytes().last() == Some(b's') {
-                            name.pop();
+            ($keyname:tt, $doc:expr, $console_unique:expr) => {
+                if $show_console_unique || !$console_unique {
+                    let mut first = true;
+                    for (idx, v) in $self.$keyname.iter().enumerate() {
+                        if let Some(key) = v {
+                            // remove trailing s
+                            let mut name = String::from(stringify!($keyname));
+                            if name.bytes().last() == Some(b's') {
+                                name.pop();
+                            }
+                            if first {
+                                for line in $doc.split('\n') {
+                                    writeln!($w, "; {}", line)?;
+                                }
+                                first = false;
+                            }
+                            writeln!($w, "{}_{:02x} = {}", name, idx, key)?;
                         }
-                        writeln!($w, "{}_{:02x} = {}", name, idx, key)?;
+                    }
+                    if !first {
+                        writeln!($w)?;
                     }
                 }
             };
         }
 
         macro_rules! multi_encrypted_keyblob {
-            ($keyname:tt) => {
-                for (idx, v) in $self.$keyname.iter().enumerate() {
-                    if let Some(key) = v {
-                        // remove trailing s
-                        let mut name = String::from(stringify!($keyname));
-                        if name.bytes().last() == Some(b's') {
-                            name.pop();
+            ($keyname:tt, $doc:expr, $console_unique:expr) => {
+                if $show_console_unique || !$console_unique {
+                    let mut first = true;
+                    for (idx, v) in $self.$keyname.iter().enumerate() {
+                        if let Some(key) = v {
+                            // remove trailing s
+                            let mut name = String::from(stringify!($keyname));
+                            if name.bytes().last() == Some(b's') {
+                                name.pop();
+                            }
+                            if first {
+                                for line in $doc.split('\n') {
+                                    writeln!($w, "; {}", line)?;
+                                }
+                                first = false;
+                            }
+                            writeln!($w, "{}_{:02x} = {}", name, idx, key)?;
                         }
-                        writeln!($w, "{}_{:02x} = {}", name, idx, key)?;
+                    }
+                    if !first {
+                        writeln!($w)?;
                     }
                 }
             };
@@ -273,9 +388,9 @@ macro_rules! make_key_macros_write {
 }
 
 macro_rules! make_key_macros {
-    ($self:ident, $section:ident) => {
+    ($d:tt, $self:ident, $section:ident) => {
         macro_rules! single_key {
-            ($keyname:tt) => {
+            ($keyname:tt, $doc:expr, $console_unique:expr, [$d ($parent:expr),*]) => {
                 let mut key = [0; 0x10];
                 $self.$keyname.or_in(
                     key_to_aes($section, stringify!($keyname), &mut key)?.map(|()| Aes128Key(key)),
@@ -284,7 +399,7 @@ macro_rules! make_key_macros {
         }
 
         macro_rules! single_key_xts {
-            ($keyname:tt) => {
+            ($keyname:tt, $doc:expr, $console_unique:expr, [$d ($parent:expr),*]) => {
                 let mut key = [0; 0x20];
                 $self.$keyname.or_in(
                     key_to_aes($section, stringify!($keyname), &mut key)?.map(|()| AesXtsKey(key)),
@@ -293,7 +408,7 @@ macro_rules! make_key_macros {
         }
 
         macro_rules! multi_key {
-            ($keyname:tt) => {
+            ($keyname:tt, $doc:expr, $console_unique:expr, $idx:ident => $d ([$d ($parent:expr),*]),*) => {
                 for (idx, v) in $self.$keyname.iter_mut().enumerate() {
                     let mut key = [0; 0x10];
                     // remove trailing s
@@ -309,7 +424,7 @@ macro_rules! make_key_macros {
         }
 
         macro_rules! multi_keyblob {
-            ($keyname:tt) => {
+            ($keyname:tt, $doc:expr, $console_unique:expr) => {
                 for (idx, v) in $self.$keyname.iter_mut().enumerate() {
                     let mut key = [0; 0x90];
                     // remove trailing s
@@ -325,7 +440,7 @@ macro_rules! make_key_macros {
         }
 
         macro_rules! multi_encrypted_keyblob {
-            ($keyname:tt) => {
+            ($keyname:tt, $doc:expr, $console_unique:expr) => {
                 for (idx, v) in $self.$keyname.iter_mut().enumerate() {
                     let mut key = [0; 0xB0];
                     // remove trailing s
@@ -341,6 +456,125 @@ macro_rules! make_key_macros {
             };
         }
     };
+}
+
+macro_rules! keys {
+    ($self:ident) => {
+        single_key!(secure_boot_key, "Dumpable using Fusee-Gelee and biskeydump.
+Secure boot key of the console associated with given BOOT0.
+Useful to derive master_key and package1_key from keyblobs.
+NOTE: CONSOLE UNIQUE!", true, []);
+        single_key!(tsec_key, "Dumpable using Fusee-Gelee and biskeydump.
+TSEC key of the console associated with given BOOT0.
+Useful to derive master_key and package1_key from keyblobs.
+NOTE: CONSOLE UNIQUE!", true, []);
+        single_key!(device_key, "Device key used to derive some FS keys.
+Derived from per_console_key_source and keyblob_key_00
+NOTE: CONSOLE UNIQUE.", true, [$self.keyblob_keys[0], $self.per_console_key_source]);
+        single_key!(tsec_root_kek, "Used to generate TSEC root keys.
+Can be found using [magic hax] on the TSEC.", false, []);
+        single_key!(package1_mac_kek, "Used to generate package1 validation keys.", false, []);
+        single_key!(package1_kek, "Used to generate package1 keys.", false, []);
+
+        multi_key!(tsec_auth_signatures, "Auth signatures, seeds for TSEC Root Key, Package1 MAC KEK and Package1 Key on 6.2.0+.", false, i => []);
+
+        multi_key!(tsec_root_key, "Key for master kek decryption, from TSEC firmware on 6.2.0+.
+Can be dumped using [magic hax] on the TSEC.
+Can be derived from tsec_root_kek and tsec_auth_signatures.", false, i => [$self.tsec_auth_signatures[i], $self.tsec_root_kek]);
+
+        single_key!(keyblob_mac_key_source, "Seed for keyblob MAC key derivation.", false, []);
+        multi_key!(keyblob_key_sources, "Seeds for keyblob keys.", false, i => []);
+
+        multi_key!(keyblob_keys, "Actual keys used to decrypt keyblobs. NOTE: CONSOLE UNIQUE.", true, i => [$self.keyblob_key_sources[i], $self.tsec_key, $self.secure_boot_key]);
+
+        multi_key!(keyblob_mac_keys, "Keys used to validate keyblobs. NOTE: CONSOLE UNIQUE.", true, i => [$self.keyblob_keys[i], $self.keyblob_mac_key_source]);
+
+        multi_encrypted_keyblob!(encrypted_keyblobs, "Actual encrypted keyblobs (EKS). NOTE: CONSOLE UNIQUE.", true);
+
+        multi_keyblob!(keyblobs, "Actual decrypted keyblobs (EKS).", false);
+
+        multi_key!(master_kek_sources, "Seeds for firmware master keks.", false, i => []);
+
+        single_key!(mariko_kek, "Key Encryption Key for mariko.", false, []);
+        single_key!(mariko_bek, "Boot Encryption Key for mariko.", false, []);
+        multi_key!(mariko_aes_class_keys, "AES Class Keys set by mariko bootrom.", false, i => []);
+        multi_key!(mariko_master_kek_sources, "Seeds for firmware master keks (Mariko).", false, i => []);
+        multi_key!(master_keks, "Firmware master keks, stored in keyblob prior to 6.2.0.", false, i =>
+            [$self.keyblobs[i]],
+            [if i >= 6 { &$self.tsec_root_key[i - 6] } else { &None }, $self.master_kek_sources[i]],
+            [$self.mariko_kek, $self.mariko_master_kek_sources[i]]
+        );
+        single_key!(master_key_source, "Seed for master key derivation.", false, []);
+        multi_key!(master_keys, "Firmware master keys.", false, i => [$self.master_key_source, $self.master_keks[i]]);
+        multi_key!(package1_keys, "Package1 keys.", false, i =>
+            [$self.keyblobs[i]],
+            [$self.package1_kek, if i >= 6 { &$self.tsec_auth_signatures[i - 6] } else { &None }]
+        );
+        multi_key!(package1_mac_keys, "Package1 MAC Keys.", false, i => [$self.package1_mac_kek, if i >= 6 { &$self.tsec_auth_signatures[i - 6] } else { &None }]);
+        single_key!(package2_key_source, "Seed for Package2 key.", false, []);
+        multi_key!(package2_keys, "Package2 keys.", false, i => [$self.master_keys[i], $self.package2_key_source]);
+        single_key!(per_console_key_source, "Seed for Device key.", false, []);
+        single_key!(aes_kek_generation_source, "Seed for GenerateAesKek, usecase + generation 0.", false, []);
+        single_key!(aes_key_generation_source, "Seed for GenerateAesKek.", false, []);
+        single_key!(titlekek_source, "Seed for titlekeks.", false, []);
+        multi_key!(titlekeks, "Title key encryption keys.", false, i => [$self.master_keys[i], $self.titlekek_source]);
+        single_key!(key_area_key_application_source, "Seed for kaek 0.", false, []);
+        single_key!(key_area_key_ocean_source, "Seed for kaek 1.", false, []);
+        single_key!(key_area_key_system_source, "Seed for kaek 2.", false, []);
+        single_key!(sd_card_kek_source, "Seed for SD card kek.", false, []);
+        single_key_xts!(sd_card_save_key_source, "Seed for SD card save encryption key.", false, []);
+        single_key_xts!(sd_card_nca_key_source, "Seed for SD card NCA encryption key.", false, []);
+        single_key!(save_mac_kek_source, "Seed for save kek.", false, []);
+        single_key!(save_mac_key_source, "Seed for save key.", false, []);
+        // Derived from save_mac_key_source, save_mac_kek_source and device_key
+        single_key!(save_mac_key, "Key used to sign savedata. NOTE: CONSOLE UNIQUE!", true, [
+            $self.device_key,
+            $self.save_mac_kek_source,
+            $self.aes_kek_generation_source,
+            $self.save_mac_key_source
+        ]);
+
+        single_key!(header_kek_source, "Seed for header kek.", false, []);
+        single_key_xts!(header_key_source, "Seed for NCA header key.", false, []);
+        single_key_xts!(header_key, "NCA header key.", false, [
+            $self.master_keys[0],
+            $self.key_area_key_application_source,
+            $self.aes_kek_generation_source,
+            $self.aes_key_generation_source
+        ]);
+        multi_key!(key_area_key_application, "Key area encryption key 0.", true, i => [
+            $self.master_keys[i],
+            $self.key_area_key_application_source,
+            $self.aes_kek_generation_source,
+            $self.aes_key_generation_source
+        ]);
+        multi_key!(key_area_key_ocean, "Key area encryption key 1.", true, i => [
+            $self.master_keys[i],
+            $self.key_area_key_ocean_source,
+            $self.aes_kek_generation_source,
+            $self.aes_key_generation_source
+        ]);
+        multi_key!(key_area_key_system, "Key area encryption key 2.", true, i => [
+            $self.master_keys[i],
+            $self.key_area_key_system_source,
+            $self.aes_kek_generation_source,
+            $self.aes_key_generation_source
+        ]);
+        single_key_xts!(sd_card_save_key, "Encryption key for SD card save.", true, [
+            $self.master_keys[0],
+            $self.sd_card_save_key_source,
+            $self.aes_kek_generation_source,
+            $self.aes_key_generation_source
+        ]);
+        single_key_xts!(sd_card_nca_key, "Encryption key for SD card NCA.", true, [
+            $self.master_keys[0],
+            $self.sd_card_nca_key_source,
+            $self.aes_kek_generation_source,
+            $self.aes_key_generation_source
+        ]);
+
+        single_key!(xci_header_key, "Key for XCI partially encrypted header.", false, []);
+    }
 }
 
 fn generate_kek(
@@ -684,88 +918,25 @@ impl Keys {
         let config = ini::Ini::read_from(&mut file)?;
         let section = config.general_section();
 
-        make_key_macros!(self, section);
-        single_key!(secure_boot_key);
-        single_key!(tsec_key);
-        multi_key!(keyblob_keys);
-        multi_key!(keyblob_mac_keys);
-        multi_key!(keyblob_key_sources);
-        multi_encrypted_keyblob!(encrypted_keyblobs);
-        multi_keyblob!(keyblobs);
-        single_key!(keyblob_mac_key_source);
-        multi_key!(tsec_root_key);
-        multi_key!(master_kek_sources);
-        multi_key!(master_keks);
-        single_key!(master_key_source);
-        multi_key!(master_keys);
-        multi_key!(package1_keys);
-        multi_key!(package2_keys);
-        single_key!(package2_key_source);
-        single_key!(aes_kek_generation_source);
-        single_key!(aes_key_generation_source);
-        single_key!(key_area_key_application_source);
-        single_key!(key_area_key_ocean_source);
-        single_key!(key_area_key_system_source);
-        single_key!(titlekek_source);
-        single_key!(header_kek_source);
-        single_key!(sd_card_kek_source);
-        single_key_xts!(sd_card_save_key_source);
-        single_key_xts!(sd_card_nca_key_source);
-        single_key!(save_mac_kek_source);
-        single_key!(save_mac_key_source);
-        single_key_xts!(header_key_source);
-        single_key_xts!(header_key);
-        multi_key!(titlekeks);
-        multi_key!(key_area_key_application);
-        multi_key!(key_area_key_ocean);
-        multi_key!(key_area_key_system);
-        single_key_xts!(sd_card_save_key);
-        single_key_xts!(sd_card_nca_key);
+        make_key_macros!($, self, section);
+        keys!(self);
         Ok(())
     }
 
     #[allow(clippy::cognitive_complexity)]
-    pub fn write<W: Write>(&self, w: &mut W) -> io::Result<()> {
-        make_key_macros_write!(self, w);
-        single_key!(secure_boot_key);
-        single_key!(tsec_key);
-        multi_key!(keyblob_keys);
-        multi_key!(keyblob_mac_keys);
-        multi_key!(keyblob_key_sources);
-        multi_encrypted_keyblob!(encrypted_keyblobs);
-        multi_keyblob!(keyblobs);
-        single_key!(keyblob_mac_key_source);
-        multi_key!(tsec_root_key);
-        multi_key!(master_kek_sources);
-        multi_key!(master_keks);
-        single_key!(master_key_source);
-        multi_key!(master_keys);
-        multi_key!(package1_keys);
-        multi_key!(package2_keys);
-        single_key!(package2_key_source);
-        single_key!(aes_kek_generation_source);
-        single_key!(aes_key_generation_source);
-        single_key!(key_area_key_application_source);
-        single_key!(key_area_key_ocean_source);
-        single_key!(key_area_key_system_source);
-        single_key!(titlekek_source);
-        single_key!(header_kek_source);
-        single_key!(sd_card_kek_source);
-        single_key_xts!(sd_card_save_key_source);
-        single_key_xts!(sd_card_nca_key_source);
-        single_key!(save_mac_kek_source);
-        single_key!(save_mac_key_source);
-        single_key_xts!(header_key_source);
-        single_key_xts!(header_key);
-        multi_key!(titlekeks);
-        multi_key!(key_area_key_application);
-        multi_key!(key_area_key_ocean);
-        multi_key!(key_area_key_system);
-        single_key_xts!(sd_card_save_key);
-        single_key_xts!(sd_card_nca_key);
+    pub fn write<W: Write>(
+        &self,
+        w: &mut W,
+        console_unique: bool,
+        minimal: bool,
+    ) -> io::Result<()> {
+        make_key_macros_write!($, self, w, console_unique, minimal);
+        keys!(self);
         Ok(())
     }
 
+    #[allow(clippy::cognitive_complexity)]
+    #[allow(clippy::single_match)]
     pub fn derive_keys(&mut self) -> Result<(), Error> {
         for i in 0..6 {
             /* Derive the keyblob_keys */
@@ -790,6 +961,13 @@ impl Keys {
                 }
                 _ => continue,
             }
+        }
+        /* Derive the device key */
+        match (&self.keyblob_keys[0], &self.per_console_key_source) {
+            (Some(keyblob_key), Some(per_console_key_source)) => {
+                self.device_key = Some(keyblob_key.derive_key(&per_console_key_source.0)?);
+            }
+            _ => (),
         }
         for i in 0..6 {
             match (
@@ -829,12 +1007,51 @@ impl Keys {
             }
         }
         for i in 6..0x20 {
+            // Derive new 6.2.0+ keks
+            match (&self.tsec_root_kek, &self.tsec_auth_signatures[i - 6]) {
+                (Some(tsec_root_kek), Some(tsec_auth_signature)) => {
+                    self.tsec_root_key[i - 6] =
+                        Some(tsec_root_kek.derive_key(&tsec_auth_signature.0)?);
+                }
+                _ => (),
+            }
+            match (&self.package1_mac_kek, &self.tsec_auth_signatures[i - 6]) {
+                (Some(package1_mac_kek), Some(tsec_auth_signature)) => {
+                    self.package1_mac_keys[i] =
+                        Some(package1_mac_kek.derive_key(&tsec_auth_signature.0)?);
+                }
+                _ => (),
+            }
+            match (&self.package1_kek, &self.tsec_auth_signatures[i - 6]) {
+                (Some(package1_kek), Some(tsec_auth_signature)) => {
+                    self.package1_keys[i] = Some(package1_kek.derive_key(&tsec_auth_signature.0)?);
+                }
+                _ => (),
+            }
+        }
+        for i in 6..0x20 {
             /* Do keygen for 6.2.0+ */
             match (&self.tsec_root_key[i - 6], &self.master_kek_sources[i]) {
                 (Some(tsec_root_key), Some(master_kek_source)) => {
                     self.master_keks[i] = Some(tsec_root_key.derive_key(&master_kek_source.0)?);
                 }
                 _ => continue,
+            }
+        }
+        for i in 0..0x20 {
+            /* Derive master keks with mariko keydata */
+            match (
+                &self.mariko_kek,
+                &mut self.mariko_master_kek_sources[i],
+                &mut self.master_keks[i],
+            ) {
+                (Some(mariko_kek), Some(mariko_master_kek_sources), ref mut master_kek @ None) => {
+                    **master_kek = Some(mariko_kek.derive_key(&mariko_master_kek_sources.0)?)
+                }
+                (Some(mariko_kek), ref mut mariko_master_kek_sources @ None, Some(master_kek)) => {
+                    **mariko_master_kek_sources = Some(mariko_kek.generate_kek(&master_kek.0)?)
+                }
+                _ => (),
             }
         }
         for i in 0..0x20 {
@@ -915,61 +1132,86 @@ impl Keys {
                 if let Some(package2_key_source) = &self.package2_key_source {
                     self.package2_keys[i] = Some(master_key.derive_key(&package2_key_source.0)?);
                 }
+            }
 
-                /* Derive Header Key */
-                #[allow(clippy::single_match)]
-                match (
-                    i,
-                    &self.header_kek_source,
-                    &self.header_key_source,
-                    &self.aes_kek_generation_source,
-                    &self.aes_key_generation_source,
-                ) {
-                    (
-                        0,
-                        Some(header_kek_source),
-                        Some(header_key_source),
-                        Some(aes_kek_generation_source),
-                        Some(aes_key_generation_source),
-                    ) => {
-                        let header_kek = generate_kek(
-                            &header_kek_source,
-                            master_key,
-                            &aes_kek_generation_source,
-                            &aes_key_generation_source,
-                        )?;
-                        self.header_key = Some(header_kek.derive_xts_key(&header_key_source.0)?);
-                    }
-                    _ => (),
+            /* Derive Header Key */
+            #[allow(clippy::single_match)]
+            match (
+                &self.master_keys[0],
+                &self.header_kek_source,
+                &self.header_key_source,
+                &self.aes_kek_generation_source,
+                &self.aes_key_generation_source,
+            ) {
+                (
+                    Some(master_key),
+                    Some(header_kek_source),
+                    Some(header_key_source),
+                    Some(aes_kek_generation_source),
+                    Some(aes_key_generation_source),
+                ) => {
+                    let header_kek = generate_kek(
+                        &header_kek_source,
+                        master_key,
+                        &aes_kek_generation_source,
+                        &aes_key_generation_source,
+                    )?;
+                    self.header_key = Some(header_kek.derive_xts_key(&header_key_source.0)?);
                 }
-                /* Derive SD Card key */
-                match (
-                    &self.sd_card_kek_source,
-                    &self.aes_kek_generation_source,
-                    &self.aes_key_generation_source,
-                ) {
-                    (
-                        Some(sd_card_kek_source),
-                        Some(aes_kek_generation_source),
-                        Some(aes_key_generation_source),
-                    ) => {
-                        let sd_kek = generate_kek(
-                            sd_card_kek_source,
-                            master_key,
-                            aes_kek_generation_source,
-                            aes_key_generation_source,
-                        )?;
-                        if let Some(sd_card_save_key_source) = &self.sd_card_save_key_source {
-                            self.sd_card_save_key =
-                                Some(sd_kek.derive_xts_key(&sd_card_save_key_source.0)?);
-                        }
-                        if let Some(sd_card_nca_key_source) = &self.sd_card_nca_key_source {
-                            self.sd_card_nca_key =
-                                Some(sd_kek.derive_xts_key(&sd_card_nca_key_source.0)?);
-                        }
+                _ => (),
+            }
+            /* Derive SD Card key */
+            match (
+                &self.master_keys[0],
+                &self.sd_card_kek_source,
+                &self.aes_kek_generation_source,
+                &self.aes_key_generation_source,
+            ) {
+                (
+                    Some(master_key),
+                    Some(sd_card_kek_source),
+                    Some(aes_kek_generation_source),
+                    Some(aes_key_generation_source),
+                ) => {
+                    let sd_kek = generate_kek(
+                        sd_card_kek_source,
+                        master_key,
+                        aes_kek_generation_source,
+                        aes_key_generation_source,
+                    )?;
+                    if let Some(sd_card_save_key_source) = &self.sd_card_save_key_source {
+                        self.sd_card_save_key =
+                            Some(sd_kek.derive_xts_key(&sd_card_save_key_source.0)?);
                     }
-                    _ => continue,
+                    if let Some(sd_card_nca_key_source) = &self.sd_card_nca_key_source {
+                        self.sd_card_nca_key =
+                            Some(sd_kek.derive_xts_key(&sd_card_nca_key_source.0)?);
+                    }
                 }
+                _ => (),
+            }
+
+            // Derive Save MAC key
+            match (
+                &self.device_key,
+                &self.save_mac_kek_source,
+                &self.aes_kek_generation_source,
+                &self.save_mac_key_source,
+            ) {
+                (
+                    Some(device_key),
+                    Some(save_mac_kek_source),
+                    Some(aes_kek_generation_source),
+                    Some(save_mac_key_source),
+                ) => {
+                    self.save_mac_key = Some(generate_kek(
+                        save_mac_kek_source,
+                        device_key,
+                        aes_kek_generation_source,
+                        save_mac_key_source,
+                    )?);
+                }
+                _ => (),
             }
         }
         Ok(())
