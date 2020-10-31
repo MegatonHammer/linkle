@@ -138,13 +138,8 @@ fn create_nxo(
             let mut out_file = output_option
                 .open(output_file)
                 .map_err(|err| (err, output_file))?;
-            nxo.write_nro(
-                &mut out_file,
-                romfs_dir,
-                icon_file.as_deref(),
-                nacp_file,
-            )
-            .map_err(|err| (err, output_file))?;
+            nxo.write_nro(&mut out_file, romfs_dir, icon_file.as_deref(), nacp_file)
+                .map_err(|err| (err, output_file))?;
         }
         "nso" => {
             let mut out_file = output_option
