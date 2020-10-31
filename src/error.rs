@@ -21,7 +21,7 @@ pub enum Error {
     #[display(fmt = "Decryption failed")]
     BlockMode(BlockModeError, Backtrace),
     #[display(fmt = "Error parsing the INI file: {}", _0)]
-    Ini(#[cause] ini::ini::Error, Backtrace),
+    Ini(#[cause] ini::Error, Backtrace),
     #[display(fmt = "Key derivation error: {}", _0)]
     Crypto(String, Backtrace),
     #[display(fmt = "Invalid keyblob {}: {}.", _1, _0)]
@@ -68,8 +68,8 @@ impl<T: AsRef<Path>> From<(io::Error, T)> for Error {
     }
 }
 
-impl From<ini::ini::Error> for Error {
-    fn from(err: ini::ini::Error) -> Error {
+impl From<ini::Error> for Error {
+    fn from(err: ini::Error) -> Error {
         Error::Ini(err, Backtrace::new())
     }
 }

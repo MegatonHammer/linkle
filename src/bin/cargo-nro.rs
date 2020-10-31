@@ -87,9 +87,7 @@ const CARGO_OPTIONS: &str = "CARGO OPTIONS:
     -h, --help                      Prints help information";
 
 trait BetterIOWrite<Ctx: Copy>: IOwrite<Ctx> {
-    fn iowrite_with_try<
-        N: scroll::ctx::SizeWith<Ctx, Units = usize> + scroll::ctx::TryIntoCtx<Ctx>,
-    >(
+    fn iowrite_with_try<N: scroll::ctx::SizeWith<Ctx> + scroll::ctx::TryIntoCtx<Ctx>>(
         &mut self,
         n: N,
         ctx: Ctx,
@@ -157,7 +155,7 @@ fn generate_debuginfo_romfs<P: AsRef<Path>>(
         }
 
         // Calculate section data length + elf/program headers
-        let data_off = ElfHeader::size(&ctx) + ProgramHeader::size(&ctx) * program_headers.len();
+        let data_off = ElfHeader::size(ctx) + ProgramHeader::size(ctx) * program_headers.len();
         let shoff = data_off as u64
             + section_headers
                 .iter()
@@ -297,9 +295,10 @@ fn main() {
         command.args(cargo_opts);
     }
 
-    let command = command.spawn().unwrap();
+    let mut command = command.spawn().unwrap();
+    let stdout_reader = std::io::BufReader::new(command.stdout.take().unwrap());
 
-    let iter = cargo_metadata::parse_messages(command.stdout.unwrap());
+    let iter = cargo_metadata::Message::parse_stream(stdout_reader);
     for message in iter {
         match message {
             Ok(Message::CompilerArtifact(ref artifact))

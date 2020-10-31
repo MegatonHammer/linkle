@@ -45,8 +45,8 @@ pub fn compress_blz(uncompressed_data: &mut Vec<u8>) -> blz_nx::BlzResult<Vec<u8
 
 pub fn calculate_sha256(data: &[u8]) -> std::io::Result<Vec<u8>> {
     let mut hasher = Sha256::default();
-    hasher.input(data);
-    Ok(Vec::from(hasher.result().as_slice()))
+    hasher.update(data);
+    Ok(Vec::from(hasher.finalize().as_slice()))
 }
 
 #[derive(Default)]

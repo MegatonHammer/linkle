@@ -1,13 +1,15 @@
 use crate::error::Error;
-use aes::block_cipher_trait::generic_array::GenericArray;
-use aes::block_cipher_trait::BlockCipher;
+use aes::cipher::generic_array::GenericArray;
+use aes::cipher::BlockCipher;
 use aes::Aes128;
-use block_modes::block_padding::ZeroPadding;
-use block_modes::{BlockMode, BlockModeIv, Ctr128};
+use aes::NewBlockCipher;
+use block_modes::cipher::SyncStreamCipher;
 use cmac::crypto_mac::Mac;
-use cmac::Cmac;
+use cmac::{Cmac, NewMac};
+use ctr::cipher::stream::NewStreamCipher;
+use ctr::Ctr128;
 use failure::Backtrace;
-use ini::{self, ini::Properties};
+use ini::{self, Properties};
 use std::fmt;
 use std::fs::File;
 use std::io::{self, ErrorKind, Write};
@@ -56,15 +58,15 @@ impl Keyblob {
         let mut encrypted_keyblob = [0; 0xB0];
         encrypted_keyblob[0x20..].copy_from_slice(&self.0);
 
-        let mut crypter = Ctr128::<Aes128, ZeroPadding>::new_fixkey(
+        let mut crypter = Ctr128::<Aes128>::new(
             GenericArray::from_slice(&key.0),
             GenericArray::from_slice(&encrypted_keyblob[0x10..0x20]),
         );
-        crypter.encrypt_nopad(&mut encrypted_keyblob[0x20..])?;
+        crypter.apply_keystream(&mut encrypted_keyblob[0x20..]);
 
         let mut cmac = Cmac::<Aes128>::new_varkey(&mac_key.0[..]).unwrap();
-        cmac.input(&encrypted_keyblob[0x10..]);
-        encrypted_keyblob[..0x10].copy_from_slice(cmac.result().code().as_slice());
+        cmac.update(&encrypted_keyblob[0x10..]);
+        encrypted_keyblob[..0x10].copy_from_slice(cmac.finalize().into_bytes().as_slice());
         Ok(EncryptedKeyblob(encrypted_keyblob))
     }
 }
@@ -80,15 +82,15 @@ impl EncryptedKeyblob {
         keyblob.copy_from_slice(&self.0[0x20..]);
 
         let mut cmac = Cmac::<Aes128>::new_varkey(&mac_key.0[..]).unwrap();
-        cmac.input(&self.0[0x10..]);
+        cmac.update(&self.0[0x10..]);
         cmac.verify(&self.0[..0x10])
             .map_err(|err| (keyblob_id, err))?;
 
-        let mut crypter = Ctr128::<Aes128, ZeroPadding>::new_fixkey(
+        let mut crypter = Ctr128::<Aes128>::new(
             GenericArray::from_slice(&key.0),
             GenericArray::from_slice(&self.0[0x10..0x20]),
         );
-        crypter.decrypt_nopad(&mut keyblob)?;
+        crypter.apply_keystream(&mut keyblob);
 
         Ok(Keyblob(keyblob))
     }
