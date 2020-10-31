@@ -611,12 +611,12 @@ impl Keys {
             vec![Some(key_path.into())]
         } else {
             vec![
-                dirs::config_dir().map(|mut v| {
+                dirs_next::config_dir().map(|mut v| {
                     v.push("switch");
                     v.push(default_key_name);
                     v
                 }),
-                dirs::home_dir().map(|mut v| {
+                dirs_next::home_dir().map(|mut v| {
                     v.push(".switch");
                     v.push(default_key_name);
                     v
