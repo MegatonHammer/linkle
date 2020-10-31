@@ -2,7 +2,6 @@ use block_modes::BlockModeError;
 use derive_more::Display;
 use failure::Backtrace;
 use failure::Fail;
-use ini;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::str::Utf8Error;

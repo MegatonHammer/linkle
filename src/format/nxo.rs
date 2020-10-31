@@ -1,11 +1,9 @@
 use crate::format::utils::HexOrNum;
 use crate::format::{nacp::NacpFile, npdm::KernelCapability, romfs::RomFs, utils};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use elf;
 use elf::types::{Machine, ProgramHeader, SectionHeader, EM_AARCH64, EM_ARM, PT_LOAD, SHT_NOTE};
 use serde_derive::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std;
 use std::convert::{TryFrom, TryInto};
 use std::fs::File;
 use std::io::{self, Cursor, Seek, SeekFrom, Write};
@@ -746,9 +744,7 @@ where
         .write_u32::<LittleEndian>(u32::try_from(segment.vaddr).expect("vaddr too big"))?;
     output_writer
         .write_u32::<LittleEndian>(u32::try_from(segment.filesz).expect("memsz too big"))?;
-    output_writer.write_u32::<LittleEndian>(
-        u32::try_from(compressed_size).expect("Compressed size too big"),
-    )?;
+    output_writer.write_u32::<LittleEndian>(compressed_size)?;
     output_writer.write_u32::<LittleEndian>(attributes)?;
 
     Ok(())

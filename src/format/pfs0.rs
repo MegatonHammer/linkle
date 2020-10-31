@@ -3,7 +3,6 @@ use crate::format::utils;
 use crate::utils::{align_up, ReadRange, TryClone};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use failure::Backtrace;
-use std;
 use std::fs::File;
 use std::io::{self, BufRead, Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;

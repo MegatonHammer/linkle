@@ -1,8 +1,6 @@
 use crate::format::utils;
 use byteorder::{LittleEndian, WriteBytesExt};
 use serde_derive::{Deserialize, Serialize};
-use serde_json;
-use std;
 use std::fs::File;
 use std::io::Write;
 
