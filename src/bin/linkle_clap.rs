@@ -141,7 +141,7 @@ fn create_nxo(
             nxo.write_nro(
                 &mut out_file,
                 romfs_dir,
-                icon_file.as_ref().map(|v| &**v),
+                icon_file.as_deref(),
                 nacp_file,
             )
             .map_err(|err| (err, output_file))?;
