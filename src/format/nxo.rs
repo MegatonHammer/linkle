@@ -72,11 +72,11 @@ where
         }
         None => {
             let mut hasher = Sha256::default();
-            hasher.input(text_data);
-            hasher.input(rodata);
-            hasher.input(data);
+            hasher.update(text_data);
+            hasher.update(rodata);
+            hasher.update(data);
 
-            output_writter.write_all(&hasher.result().as_slice()[..0x20])?;
+            output_writter.write_all(&hasher.finalize().as_slice()[..0x20])?;
         }
     }
     Ok(())
