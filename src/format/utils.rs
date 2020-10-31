@@ -1,9 +1,6 @@
-use elf;
-use lz4;
 use serde::de::{Unexpected, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
-use std;
 use std::fmt;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
