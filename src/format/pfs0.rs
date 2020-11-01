@@ -2,7 +2,8 @@ use crate::error::Error;
 use crate::format::utils;
 use crate::utils::{align_up, ReadRange, TryClone};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use failure::Backtrace;
+use snafu::Backtrace;
+use snafu::GenerateBacktrace;
 use std::fs::File;
 use std::io::{self, BufRead, Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
@@ -55,7 +56,10 @@ impl Pfs0 {
         let mut magic = [0; 4];
         f.read_exact(&mut magic)?;
         if &magic != b"PFS0" {
-            return Err(Error::InvalidPfs0("magic is wrong", Backtrace::new()));
+            return Err(Error::InvalidPfs0 {
+                error: "magic is wrong",
+                backtrace: Backtrace::generate(),
+            });
         }
 
         let filecount = f.read_u32::<LittleEndian>()?;

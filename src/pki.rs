@@ -8,8 +8,9 @@ use cmac::crypto_mac::Mac;
 use cmac::{Cmac, NewMac};
 use ctr::cipher::stream::NewStreamCipher;
 use ctr::Ctr128;
-use failure::Backtrace;
 use ini::{self, Properties};
+use snafu::Backtrace;
+use snafu::GenerateBacktrace;
 use std::fmt;
 use std::fs::File;
 use std::io::{self, ErrorKind, Write};
@@ -130,21 +131,21 @@ fn key_to_aes(keys: &Properties, name: &str, key: &mut [u8]) -> Result<Option<()
     let value = keys.get(name);
     if let Some(value) = value {
         if value.len() != key.len() * 2 {
-            return Err(Error::Crypto(
-                format!(
+            return Err(Error::Crypto {
+                error: format!(
                     "Key {} is not of the right size. It should be a {} byte hexstring",
                     name,
                     key.len() * 2
                 ),
-                Backtrace::new(),
-            ));
+                backtrace: Backtrace::generate(),
+            });
         }
         for (idx, c) in value.bytes().enumerate() {
             let c = match c {
                 b'a'..=b'z' => c - b'a' + 10,
                 b'A'..=b'Z' => c - b'A' + 10,
                 b'0'..=b'9' => c - b'0',
-                c => return Err(Error::Crypto(format!("Key {} contains invalid character {}. Each character should be a hexadecimal digit.", name, c as char), Backtrace::new()))
+                c => return Err(Error::Crypto { error: format!("Key {} contains invalid character {}. Each character should be a hexadecimal digit.", name, c as char), backtrace: Backtrace::generate()})
             };
             key[idx / 2] |= c << if idx % 2 == 0 { 4 } else { 0 };
         }
@@ -611,12 +612,12 @@ impl Keys {
             vec![Some(key_path.into())]
         } else {
             vec![
-                dirs::config_dir().map(|mut v| {
+                dirs_next::config_dir().map(|mut v| {
                     v.push("switch");
                     v.push(default_key_name);
                     v
                 }),
-                dirs::home_dir().map(|mut v| {
+                dirs_next::home_dir().map(|mut v| {
                     v.push(".switch");
                     v.push(default_key_name);
                     v

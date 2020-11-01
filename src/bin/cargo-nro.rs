@@ -20,29 +20,28 @@ use std::process::{Command, Stdio};
 use cargo_metadata::{Message, Package};
 use cargo_toml2::CargoConfig;
 use clap::{App, Arg};
-use derive_more::Display;
-use failure::Fail;
 use goblin::elf::section_header::{SHT_NOBITS, SHT_STRTAB, SHT_SYMTAB};
 use goblin::elf::{Elf, Header as ElfHeader, ProgramHeader};
 use linkle::format::{nacp::NacpFile, nxo::NxoFile, romfs::RomFs};
+use snafu::Snafu;
 
-#[derive(Debug, Fail, Display)]
+#[derive(Debug, Snafu)]
 enum Error {
-    #[display(fmt = "{}", _0)]
-    Goblin(#[cause] goblin::error::Error),
-    #[display(fmt = "{}", _0)]
-    Linkle(#[cause] linkle::error::Error),
+    #[snafu(display("{}", error))]
+    Goblin { error: goblin::error::Error },
+    #[snafu(display("{}", error))]
+    Linkle { error: linkle::error::Error },
 }
 
 impl From<goblin::error::Error> for Error {
-    fn from(from: goblin::error::Error) -> Error {
-        Error::Goblin(from)
+    fn from(error: goblin::error::Error) -> Error {
+        Error::Goblin { error }
     }
 }
 
 impl From<linkle::error::Error> for Error {
-    fn from(from: linkle::error::Error) -> Error {
-        Error::Linkle(from)
+    fn from(error: linkle::error::Error) -> Error {
+        Error::Linkle { error }
     }
 }
 

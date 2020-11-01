@@ -1,6 +1,7 @@
 use crate::error::Error;
 use byteorder::{WriteBytesExt, LE};
-use failure::Backtrace;
+use snafu::Backtrace;
+use snafu::GenerateBacktrace;
 use std::cell::RefCell;
 use std::fs::{self, File};
 use std::io::{self, Cursor, Write};
@@ -319,9 +320,15 @@ impl RomFs {
                     ctx.file_table_size += mem::size_of::<RomFsFileEntryHdr>() as u64
                         + align64(file.borrow().name.len() as u64, 4);
                 } else if file_type.is_symlink() {
-                    return Err(Error::RomFsSymlink(entry.path(), Backtrace::new()));
+                    return Err(Error::RomFsSymlink {
+                        error: entry.path(),
+                        backtrace: Backtrace::generate(),
+                    });
                 } else {
-                    return Err(Error::RomFsFiletype(entry.path(), Backtrace::new()));
+                    return Err(Error::RomFsFiletype {
+                        error: entry.path(),
+                        backtrace: Backtrace::generate(),
+                    });
                 }
             }
             parent_dir
