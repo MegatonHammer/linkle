@@ -118,7 +118,7 @@ NOTE: Every fields are optional
 | Supported Languages|
 |:------------------:|
 | en-US              |
-| en-UK              |
+| en-GB              |
 | ja                 |
 | fr                 |
 | de                 |
