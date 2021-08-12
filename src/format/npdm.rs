@@ -83,8 +83,8 @@ impl KernelCapability {
                 lowest_cpu_id,
             } => {
                 vec![*0b111u32
-                    .set_bits(04..10, u32::from(*lowest_thread_priority))
-                    .set_bits(10..16, u32::from(*highest_thread_priority))
+                    .set_bits(04..10, u32::from(*highest_thread_priority))
+                    .set_bits(10..16, u32::from(*lowest_thread_priority))
                     .set_bits(16..24, u32::from(*lowest_cpu_id))
                     .set_bits(24..32, u32::from(*highest_cpu_id))]
             },
@@ -236,7 +236,7 @@ impl NpdmJson {
             sac_encoded_len(&self.service_host) + sac_encoded_len(&self.service_access) +
             self.kernel_capabilities.iter().map(|v| v.encode().len() * 4).sum::<usize>()) as u32;
 
-            bincode::DefaultOptions::new().serialize_into(&mut file, &meta)?;
+            bincode::DefaultOptions::new().with_fixint_encoding().allow_trailing_bytes().with_no_limit().with_little_endian().serialize_into(&mut file, &meta)?;
 
         match acid_behavior {
             ACIDBehavior::Sign { pem_file_path } => {
@@ -277,7 +277,7 @@ impl NpdmJson {
         aci0.kernel_access_control_offset = aci0.service_access_control_offset + aci0.service_access_control_size;
         aci0.kernel_access_control_size = self.kernel_capabilities.iter().map(|v| v.encode().len() * 4).sum::<usize>() as u32;
 
-        bincode::DefaultOptions::new().serialize_into(&mut file, &aci0)?;
+        bincode::DefaultOptions::new().with_fixint_encoding().allow_trailing_bytes().with_no_limit().with_little_endian().serialize_into(&mut file, &aci0)?;
 
         let mut fah = RawFileSystemAccessHeader::default();
         fah.version = 1;
@@ -288,7 +288,7 @@ impl NpdmJson {
         fah.data_size_plus_content_owner_size = 0x1C;
         fah.size_of_save_data_owners = 0;
 
-        bincode::DefaultOptions::new().serialize_into(&mut file, &fah)?;
+        bincode::DefaultOptions::new().with_fixint_encoding().allow_trailing_bytes().with_no_limit().with_little_endian().serialize_into(&mut file, &fah)?;
 
         for elem in &self.service_access {
             if elem.len() & !7 != 0 || elem.len() == 0 {
@@ -400,13 +400,13 @@ fn write_acid<T: Write>(mut writer: &mut T, npdm: &NpdmJson, meta: &RawMeta) -> 
     fac.padding = [0; 3];
     fac.permissions_bitmask.copy_from_slice(&npdm.filesystem_access.permissions.0.to_le_bytes());
 
-    let mut final_size = bincode::DefaultOptions::new().serialized_size(&acid)?;
+    let mut final_size = bincode::DefaultOptions::new().with_fixint_encoding().allow_trailing_bytes().with_no_limit().with_little_endian().serialized_size(&acid)?;
     assert_eq!(final_size as usize, size_of::<RawAcid>(), "Serialized ACID has wrong size");
-    bincode::DefaultOptions::new().serialize_into(&mut writer, &acid)?;
+    bincode::DefaultOptions::new().with_fixint_encoding().allow_trailing_bytes().with_no_limit().with_little_endian().serialize_into(&mut writer, &acid)?;
 
-    final_size += bincode::DefaultOptions::new().serialized_size(&fac)?;
+    final_size += bincode::DefaultOptions::new().with_fixint_encoding().allow_trailing_bytes().with_no_limit().with_little_endian().serialized_size(&fac)?;
     assert_eq!(final_size as usize, size_of::<RawAcid>() + size_of::<RawFileSystemAccessControl>(), "Serialized FAC has wrong size");
-    bincode::DefaultOptions::new().serialize_into(&mut writer, &fac)?;
+    bincode::DefaultOptions::new().with_fixint_encoding().allow_trailing_bytes().with_no_limit().with_little_endian().serialize_into(&mut writer, &fac)?;
 
     for elem in &npdm.service_access {
         if elem.len() & !7 != 0 || elem.len() == 0 {
