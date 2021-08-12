@@ -1,13 +1,10 @@
-use elf;
-use lz4;
-use std;
+use serde::de::{Unexpected, Visitor};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::ser::{SerializeTuple};
+use sha2::{Digest, Sha256};
 use std::fmt;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
-use sha2::{Sha256, Digest};
-use serde::{Serialize, Serializer, Deserialize, Deserializer};
-use serde::ser::SerializeTuple;
-use serde::de::{Visitor, Unexpected};
 
 pub fn align(size: usize, padding: usize) -> usize {
     ((size as usize) + padding) & !padding
@@ -25,7 +22,7 @@ pub fn check_string_or_truncate(string: &mut String, name: &str, size: usize) {
     }
 }
 
-pub fn get_section_data(
+pub fn get_segment_data(
     file: &mut File,
     header: &elf::types::ProgramHeader,
 ) -> std::io::Result<Vec<u8>> {
@@ -40,7 +37,8 @@ pub fn compress_lz4(uncompressed_data: &mut Vec<u8>) -> std::io::Result<Vec<u8>>
 }
 
 pub fn compress_blz(uncompressed_data: &mut Vec<u8>) -> blz_nx::BlzResult<Vec<u8>> {
-    let mut compressed_data = vec![0; blz_nx::get_worst_compression_buffer_size(uncompressed_data.len())];
+    let mut compressed_data =
+        vec![0; blz_nx::get_worst_compression_buffer_size(uncompressed_data.len())];
     let res = blz_nx::compress_raw(&mut uncompressed_data[..], &mut compressed_data[..])?;
     compressed_data.resize(res, 0);
     Ok(compressed_data)
@@ -48,8 +46,8 @@ pub fn compress_blz(uncompressed_data: &mut Vec<u8>) -> blz_nx::BlzResult<Vec<u8
 
 pub fn calculate_sha256(data: &[u8]) -> std::io::Result<Vec<u8>> {
     let mut hasher = Sha256::default();
-    hasher.input(data);
-    Ok(Vec::from(hasher.result().as_slice()))
+    hasher.update(data);
+    Ok(Vec::from(hasher.finalize().as_slice()))
 }
 
 #[derive(Default)]
@@ -77,21 +75,23 @@ impl<'de> Deserialize<'de> for HexOrNum {
 
             fn visit_u64<E>(self, v: u64) -> Result<u64, E>
             where
-                E: serde::de::Error
+                E: serde::de::Error,
             {
                 Ok(v)
             }
 
             fn visit_str<E>(self, v: &str) -> Result<u64, E>
             where
-                E: serde::de::Error
+                E: serde::de::Error,
             {
                 if v.starts_with("0x") {
-                    u64::from_str_radix(&v[2..], 16).map_err(|_| {
-                        E::invalid_value(Unexpected::Str(v), &"a hex-encoded string")
-                    })
+                    u64::from_str_radix(&v[2..], 16)
+                        .map_err(|_| E::invalid_value(Unexpected::Str(v), &"a hex-encoded string"))
                 } else {
-                    Err(E::invalid_value(Unexpected::Str(v), &"a hex-encoded string"))
+                    Err(E::invalid_value(
+                        Unexpected::Str(v),
+                        &"a hex-encoded string",
+                    ))
                 }
             }
         }

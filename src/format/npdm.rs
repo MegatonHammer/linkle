@@ -1,16 +1,18 @@
-use std;
-use std::io::Write;
-use std::collections::HashMap;
-use crate::format::utils::{SigOrPubKey, Reserved64, HexOrNum};
+use crate::format::utils;
+use crate::format::utils::HexOrNum;
+use crate::format::utils::Reserved64;
+use crate::format::utils::SigOrPubKey;
 use crate::error::Error;
-use serde_derive::{Serialize, Deserialize};
-use serde_json;
 use bit_field::BitField;
+use bincode::Options;
+use serde_derive::{Deserialize, Serialize};
+use snafu::GenerateBacktrace;
+use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::path::Path;
 use std::mem::size_of;
-use failure::Backtrace;
-use sha2::{Digest, Sha256};
+use std::io::Write;
+use snafu::Backtrace;
 use rsa::{BigUint, RSAPrivateKey};
 
 pub mod syscalls;
@@ -98,7 +100,7 @@ impl KernelCapability {
                 is_ro,
                 is_io,
             } => {
-                let mut val = vec![0b111111u32, 0b111111u32];
+                let mut val = vec![0b11_1111u32, 0b11_1111u32];
                 val[0]
                     .set_bits(7..31, u32::try_from(address.0).unwrap())
                     .set_bit(31, *is_ro);
@@ -106,36 +108,28 @@ impl KernelCapability {
                     .set_bits(7..31, u32::try_from(size.0).unwrap())
                     .set_bit(31, *is_io);
                 val
-            },
+            }
             KernelCapability::MapPage(page) => {
-                vec![*0b1111111u32
-                    .set_bits(8..32, u32::try_from(page.0).unwrap())]
-            },
-            KernelCapability::IrqPair(irq_pair) => {
-                vec![*0b11111111111u32
-                    .set_bits(12..22, u32::from(irq_pair[0]))
-                    .set_bits(22..32, u32::from(irq_pair[1]))]
-            },
+                vec![*0b111_1111u32.set_bits(8..32, u32::try_from(page.0).unwrap())]
+            }
+            KernelCapability::IrqPair(irq_pair) => vec![*0b111_1111_1111u32
+                .set_bits(12..22, u32::from(irq_pair[0]))
+                .set_bits(22..32, u32::from(irq_pair[1]))],
             KernelCapability::ApplicationType(app_type) => {
-                vec![*0b1111111111111u32
-                    .set_bits(14..17, u32::from(*app_type))]
-            },
+                vec![*0b1_1111_1111_1111u32.set_bits(14..17, u32::from(*app_type))]
+            }
             KernelCapability::MinKernelVersion(min_kernel) => {
-                vec![*0b11111111111111u32
-                    .set_bits(15..32, u32::try_from(min_kernel.0).unwrap())]
-            },
+                vec![*0b11_1111_1111_1111u32.set_bits(15..32, u32::try_from(min_kernel.0).unwrap())]
+            }
             KernelCapability::HandleTableSize(handle_table_size) => {
-                vec![*0b111111111111111u32
-                    .set_bits(16..26, u32::from(*handle_table_size))]
-            },
+                vec![*0b111_1111_1111_1111u32.set_bits(16..26, u32::from(*handle_table_size))]
+            }
             KernelCapability::DebugFlags {
                 allow_debug,
                 force_debug,
-            } => {
-                vec![*0b1111111111111111u32
-                    .set_bit(17, *allow_debug)
-                    .set_bit(18, *force_debug)]
-            },
+            } => vec![*0b1111_1111_1111_1111u32
+                .set_bit(17, *allow_debug)
+                .set_bit(18, *force_debug)],
         }
     }
 }
@@ -205,7 +199,10 @@ impl NpdmJson {
         meta.magic = *b"META";
 
         if self.address_space_type & !3 != 0 {
-            return Err(Error::InvalidNpdmValue("address_space_type".into(), Backtrace::new()));
+            return Err(Error::InvalidNpdmValue {
+                error: "address_space_type".into(),
+                backtrace: Backtrace::generate()
+            });
         }
         meta.mmu_flags = (self.address_space_type & 3) << 1;
         if self.is_64_bit { meta.mmu_flags |= 1; }
@@ -239,7 +236,7 @@ impl NpdmJson {
             sac_encoded_len(&self.service_host) + sac_encoded_len(&self.service_access) +
             self.kernel_capabilities.iter().map(|v| v.encode().len() * 4).sum::<usize>()) as u32;
 
-        bincode::config().little_endian().serialize_into(&mut file, &meta)?;
+            bincode::DefaultOptions::new().serialize_into(&mut file, &meta)?;
 
         match acid_behavior {
             ACIDBehavior::Sign { pem_file_path } => {
@@ -251,9 +248,7 @@ impl NpdmJson {
                 println!("Signing over {:02x?}", v);
 
                 // calculate signature.
-                let mut hash = Sha256::new();
-                write_acid(&mut hash, self, &meta)?;
-                let hash = hash.result();
+                let hash = utils::calculate_sha256(v.as_slice())?;
                 println!("Signing over {:02x?}", hash);
                 let sig = pkey.sign(rsa::PaddingScheme::new_pss::<sha2::Sha256, _>(rand::thread_rng()), &hash)?;
                 assert_eq!(sig.len(), 0x100, "Signature of wrong length generated");
@@ -282,7 +277,7 @@ impl NpdmJson {
         aci0.kernel_access_control_offset = aci0.service_access_control_offset + aci0.service_access_control_size;
         aci0.kernel_access_control_size = self.kernel_capabilities.iter().map(|v| v.encode().len() * 4).sum::<usize>() as u32;
 
-        bincode::config().little_endian().serialize_into(&mut file, &aci0)?;
+        bincode::DefaultOptions::new().serialize_into(&mut file, &aci0)?;
 
         let mut fah = RawFileSystemAccessHeader::default();
         fah.version = 1;
@@ -293,11 +288,14 @@ impl NpdmJson {
         fah.data_size_plus_content_owner_size = 0x1C;
         fah.size_of_save_data_owners = 0;
 
-        bincode::config().little_endian().serialize_into(&mut file, &fah)?;
+        bincode::DefaultOptions::new().serialize_into(&mut file, &fah)?;
 
         for elem in &self.service_access {
             if elem.len() & !7 != 0 || elem.len() == 0 {
-                return Err(Error::InvalidNpdmValue(format!("service_access.{}", elem).into(), Backtrace::new()))
+                return Err(Error::InvalidNpdmValue{
+                    error: format!("service_access.{}", elem).into(),
+                    backtrace: Backtrace::generate()
+                });
             }
             file.write_all(&[elem.len() as u8 - 1])?;
             file.write_all(elem.as_bytes())?;
@@ -305,7 +303,10 @@ impl NpdmJson {
 
         for elem in &self.service_host {
             if elem.len() & !7 != 0 || elem.len() == 0 {
-                return Err(Error::InvalidNpdmValue(format!("service_host.{}", elem).into(), Backtrace::new()))
+                return Err(Error::InvalidNpdmValue{
+                    error: format!("service_host.{}", elem).into(),
+                    backtrace: Backtrace::generate()
+                });
             }
             file.write_all(&[0x80 | (elem.len() as u8 - 1)])?;
             file.write_all(elem.as_bytes())?;
@@ -374,7 +375,10 @@ fn write_acid<T: Write>(mut writer: &mut T, npdm: &NpdmJson, meta: &RawMeta) -> 
     if npdm.is_retail { acid.flags |= 1; }
 
     if npdm.pool_partition & !3 != 0 {
-        return Err(Error::InvalidNpdmValue("pool_partition".into(), Backtrace::new()));
+        return Err(Error::InvalidNpdmValue{
+            error: format!("pool_partition").into(),
+            backtrace: Backtrace::generate()
+        });
     }
     acid.flags |= (npdm.pool_partition & 3) << 2;
     // TODO: Unqualified approval. Zefuk is this?
@@ -396,17 +400,20 @@ fn write_acid<T: Write>(mut writer: &mut T, npdm: &NpdmJson, meta: &RawMeta) -> 
     fac.padding = [0; 3];
     fac.permissions_bitmask.copy_from_slice(&npdm.filesystem_access.permissions.0.to_le_bytes());
 
-    let mut final_size = bincode::config().little_endian().serialized_size(&acid)?;
+    let mut final_size = bincode::DefaultOptions::new().serialized_size(&acid)?;
     assert_eq!(final_size as usize, size_of::<RawAcid>(), "Serialized ACID has wrong size");
-    bincode::config().little_endian().serialize_into(&mut writer, &acid)?;
+    bincode::DefaultOptions::new().serialize_into(&mut writer, &acid)?;
 
-    final_size += bincode::config().little_endian().serialized_size(&fac)?;
+    final_size += bincode::DefaultOptions::new().serialized_size(&fac)?;
     assert_eq!(final_size as usize, size_of::<RawAcid>() + size_of::<RawFileSystemAccessControl>(), "Serialized FAC has wrong size");
-    bincode::config().little_endian().serialize_into(&mut writer, &fac)?;
+    bincode::DefaultOptions::new().serialize_into(&mut writer, &fac)?;
 
     for elem in &npdm.service_access {
         if elem.len() & !7 != 0 || elem.len() == 0 {
-            return Err(Error::InvalidNpdmValue(format!("service_access.{}", elem).into(), Backtrace::new()))
+            return Err(Error::InvalidNpdmValue{
+                error: format!("service_access.{}", elem).into(),
+                backtrace: Backtrace::generate()
+            });
         }
         final_size += 1;
         writer.write_all(&[elem.len() as u8 - 1])?;
@@ -416,7 +423,10 @@ fn write_acid<T: Write>(mut writer: &mut T, npdm: &NpdmJson, meta: &RawMeta) -> 
 
     for elem in &npdm.service_host {
         if elem.len() & !7 != 0 || elem.len() == 0 {
-            return Err(Error::InvalidNpdmValue(format!("service_host.{}", elem).into(), Backtrace::new()))
+            return Err(Error::InvalidNpdmValue{
+                error: format!("service_host.{}", elem).into(),
+                backtrace: Backtrace::generate()
+            });
         }
         final_size += 1;
         writer.write_all(&[0x80 | (elem.len() as u8 - 1)])?;
