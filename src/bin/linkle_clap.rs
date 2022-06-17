@@ -264,9 +264,9 @@ fn print_keys(
 }
 
 fn create_npdm(input_file: &Path, input_acid: Option<&Path>, sign_acid: Option<&Path>, output_file: &Path) -> Result<(), linkle::error::Error> {
-    use linkle::format::npdm::{NpdmJson, ACIDBehavior};
+    use linkle::format::npdm::{NpdmInput, AcidBehavior};
 
-    let npdm = NpdmJson::from_file(&input_file)?;
+    let npdm = NpdmInput::from_json(&input_file)?;
     let mut option = OpenOptions::new();
     let output_option = option.write(true).create(true).truncate(true);
     let mut out_file = output_option.open(output_file).map_err(|err| (err, output_file))?;
@@ -274,11 +274,11 @@ fn create_npdm(input_file: &Path, input_acid: Option<&Path>, sign_acid: Option<&
         // They are set as conflicting in clap, so we can't reach here.
         unreachable!("Can't pass both sign_acid and input_acid.");
     } else if let Some(input_pem) = sign_acid {
-        ACIDBehavior::Sign { pem_file_path: input_pem }
+        AcidBehavior::Sign { pem_file_path: input_pem }
     } else if let Some(input_acid) = input_acid {
-        ACIDBehavior::Use { acid_file_path: input_acid }
+        AcidBehavior::Use { acid_file_path: input_acid }
     } else {
-        ACIDBehavior::Empty
+        AcidBehavior::Empty
     };
     npdm.into_npdm(&mut out_file, behavior)?;
     Ok(())
@@ -331,10 +331,8 @@ fn process_args(app: &Opt) {
         } => create_romfs(input_directory, output_file),
         Opt::Keygen {
             dev,
-            ref keyfile,
-            show_console_unique,
-            minimal,
-        } => print_keys(*dev, to_opt_ref(keyfile), *show_console_unique, *minimal),
+            ref keyfile
+        } => print_keys(*dev, to_opt_ref(keyfile), true, false),
         Opt::Npdm {
             ref input_file,
             ref pem_file,

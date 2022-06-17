@@ -1,9 +1,8 @@
-//! Straight from SunriseOS' libkern
 use serde_derive::{Serialize, Deserialize};
 
 #[repr(u32)]
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
-pub enum SyscallNames {
+pub enum SystemCallId {
     SetHeapSize = 0x01,
     SetMemoryPermission = 0x02,
     SetMemoryAttribute = 0x03,
@@ -119,11 +118,5 @@ pub enum SyscallNames {
     GetProcessInfo = 0x7C,
     CreateResourceLimit = 0x7D,
     SetResourceLimitLimitValue = 0x7E,
-    CallSecureMonitor = 0x7F,
-
-    // Sunrise extensions
-    MapFramebuffer = 0x80,
-    StartProcessEntrypoint = 0x81,
-    MapMmioRegion = 0x82,
-    SetThreadArea = 0x83,
+    CallSecureMonitor = 0x7F
 }

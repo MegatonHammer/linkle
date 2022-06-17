@@ -15,42 +15,119 @@ use std::io::Write;
 use snafu::Backtrace;
 use rsa::{BigUint, RSAPrivateKey};
 
-pub mod syscalls;
+pub mod svc;
 
 // TODO: Pretty errors if the user messes up.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
-pub enum Syscalls {
-    /// Accepts the standard svcName: 0xsvc_hex
+pub enum SystemCalls {
+    /// Accepts the standard svcName: 0x<svc_id_hex>
     KeyValue(HashMap<String, HexOrNum>),
     /// Accepts syscall names. Those must be correctly spelled.
-    Name(Vec<syscalls::SyscallNames>),
+    Name(Vec<svc::SystemCallId>),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ProgramType {
+    Value(HexOrNum),
+    Name(String)
+}
+
+impl ProgramType {
+    pub fn get_value(&self) -> Option<u16> {
+        match self {
+            ProgramType::Value(prog_type_val) => {
+                if prog_type_val.0 > 2 {
+                    None
+                }
+                else {
+                    Some(prog_type_val.0 as u16)
+                }
+            }
+            ProgramType::Name(prog_type_str) => {
+                match prog_type_str.to_lowercase().as_str() {
+                    "system" => Some(0),
+                    "application" => Some(1),
+                    "applet" => Some(2),
+                    _ => None
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum KernelVersion {
+    Value(HexOrNum),
+    Version(String)
+}
+
+impl KernelVersion {
+    pub fn get_value(&self) -> Option<u16> {
+        match self {
+            KernelVersion::Value(ver_val) => {
+                if ver_val.0 < 0x030 {
+                    None
+                }
+                else {
+                    Some(ver_val.0 as u16)
+                }
+            },
+            KernelVersion::Version(ver_str) => {
+                let ver_strs: Vec<&str> = ver_str.split('.').collect();
+                if ver_strs.len() == 2 {
+                    if let Ok(major) = u32::from_str_radix(ver_strs[0], 10) {
+                        if let Ok(minor) = u32::from_str_radix(ver_strs[1], 10) {
+                            return Some(*0u16.set_bits(0..4, major as u16).set_bits(4..16, minor as u16))
+                        }
+                    }
+                }
+
+                return None;
+            }
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type", content = "value")]
 #[serde(rename_all = "snake_case")]
 pub enum KernelCapability {
-    KernelFlags {
-        highest_thread_priority: u8,
-        lowest_thread_priority: u8,
-        highest_cpu_id: u8,
-        lowest_cpu_id: u8,
+    #[serde(alias = "kernel_flags")]
+    ThreadInfo {
+        #[serde(alias = "highest_thread_priority")]
+        highest_priority: u8,
+        #[serde(alias = "lowest_thread_priority")]
+        lowest_priority: u8,
+        #[serde(alias = "highest_cpu_id")]
+        max_core_number: u8,
+        #[serde(alias = "lowest_cpu_id")]
+        min_core_number: u8,
     },
-    Syscalls(Syscalls),
-    Map {
+    #[serde(alias = "syscalls")]
+    EnableSystemCalls(SystemCalls),
+    #[serde(alias = "map")]
+    MemoryMap {
         address: HexOrNum,
         size: HexOrNum,
         is_ro: bool,
         is_io: bool,
     },
-    MapPage(HexOrNum),
-    IrqPair([u16; 2]),
-    ApplicationType(u16),
-    MinKernelVersion(HexOrNum),
+    #[serde(alias = "map_page")]
+    IoMemoryMap(HexOrNum),
+    #[serde(alias = "irq_pair")]
+    EnableInterrupts([u16; 2]),
+    #[serde(alias = "application_type")]
+    MiscParams(ProgramType),
+    #[serde(alias = "min_kernel_version")]
+    KernelVersion(KernelVersion),
     HandleTableSize(u16),
-    DebugFlags {
-        allow_debug: bool,
+    #[serde(alias = "debug_flags")]
+    MiscFlags {
+        #[serde(alias = "allow_debug")]
+        enable_debug: bool,
         force_debug: bool,
     },
 }
@@ -74,27 +151,27 @@ fn encode_syscalls<I: Iterator<Item=u32>>(syscalls: I) -> Vec<u32> {
 }
 
 impl KernelCapability {
-    pub fn encode(&self) -> Vec<u32> {
+    pub fn encode(&self) -> Result<Vec<u32>, Error> {
         match self {
-            KernelCapability::KernelFlags {
-                highest_thread_priority,
-                lowest_thread_priority,
-                highest_cpu_id,
-                lowest_cpu_id,
+            KernelCapability::ThreadInfo {
+                highest_priority,
+                lowest_priority,
+                max_core_number,
+                min_core_number,
             } => {
-                vec![*0b111u32
-                    .set_bits(04..10, u32::from(*highest_thread_priority))
-                    .set_bits(10..16, u32::from(*lowest_thread_priority))
-                    .set_bits(16..24, u32::from(*lowest_cpu_id))
-                    .set_bits(24..32, u32::from(*highest_cpu_id))]
+                Ok(vec![*0b111u32
+                    .set_bits(04..10, u32::from(*highest_priority))
+                    .set_bits(10..16, u32::from(*lowest_priority))
+                    .set_bits(16..24, u32::from(*min_core_number))
+                    .set_bits(24..32, u32::from(*max_core_number))])
             },
-            KernelCapability::Syscalls(Syscalls::Name(syscalls)) => {
-                encode_syscalls(syscalls.iter().map(|v| *v as u32))
+            KernelCapability::EnableSystemCalls(SystemCalls::Name(syscalls)) => {
+                Ok(encode_syscalls(syscalls.iter().map(|v| *v as u32)))
             },
-            KernelCapability::Syscalls(Syscalls::KeyValue(syscalls)) => {
-                encode_syscalls(syscalls.iter().map(|(_, v)| v.0 as u32))
+            KernelCapability::EnableSystemCalls(SystemCalls::KeyValue(syscalls)) => {
+                Ok(encode_syscalls(syscalls.iter().map(|(_, v)| v.0 as u32)))
             },
-            KernelCapability::Map {
+            KernelCapability::MemoryMap {
                 address,
                 size,
                 is_ro,
@@ -107,29 +184,35 @@ impl KernelCapability {
                 val[1]
                     .set_bits(7..31, u32::try_from(size.0).unwrap())
                     .set_bit(31, *is_io);
-                val
+                Ok(val)
             }
-            KernelCapability::MapPage(page) => {
-                vec![*0b111_1111u32.set_bits(8..32, u32::try_from(page.0).unwrap())]
+            KernelCapability::IoMemoryMap(page) => {
+                Ok(vec![*0b111_1111u32.set_bits(8..32, u32::try_from(page.0).unwrap())])
             }
-            KernelCapability::IrqPair(irq_pair) => vec![*0b111_1111_1111u32
+            KernelCapability::EnableInterrupts(irq_pair) => Ok(vec![*0b111_1111_1111u32
                 .set_bits(12..22, u32::from(irq_pair[0]))
-                .set_bits(22..32, u32::from(irq_pair[1]))],
-            KernelCapability::ApplicationType(app_type) => {
-                vec![*0b1_1111_1111_1111u32.set_bits(14..17, u32::from(*app_type))]
+                .set_bits(22..32, u32::from(irq_pair[1]))]),
+            KernelCapability::MiscParams(prog_type) => {
+                match prog_type.get_value() {
+                    None => Err(Error::InvalidNpdmValue { error: "misc_params (program_type)".into(), backtrace: Backtrace::generate() }),
+                    Some(prog_type_val) => Ok(vec![*0b1_1111_1111_1111u32.set_bits(14..17, prog_type_val as u32)])
+                }
             }
-            KernelCapability::MinKernelVersion(min_kernel) => {
-                vec![*0b11_1111_1111_1111u32.set_bits(15..32, u32::try_from(min_kernel.0).unwrap())]
+            KernelCapability::KernelVersion(kern_ver) => {
+                match kern_ver.get_value() {
+                    None => Err(Error::InvalidNpdmValue { error: "kernel_version".into(), backtrace: Backtrace::generate() }),
+                    Some(kern_ver_val) => Ok(vec![*0b11_1111_1111_1111u32.set_bits(15..32, kern_ver_val as u32)])
+                }
             }
             KernelCapability::HandleTableSize(handle_table_size) => {
-                vec![*0b111_1111_1111_1111u32.set_bits(16..26, u32::from(*handle_table_size))]
+                Ok(vec![*0b111_1111_1111_1111u32.set_bits(16..26, u32::from(*handle_table_size))])
             }
-            KernelCapability::DebugFlags {
-                allow_debug,
+            KernelCapability::MiscFlags {
+                enable_debug,
                 force_debug,
-            } => vec![*0b1111_1111_1111_1111u32
-                .set_bit(17, *allow_debug)
-                .set_bit(18, *force_debug)],
+            } => Ok(vec![*0b1111_1111_1111_1111u32
+                .set_bit(17, *enable_debug)
+                .set_bit(18, *force_debug)]),
         }
     }
 }
@@ -139,52 +222,67 @@ fn sac_encoded_len(sacs: &[String]) -> usize {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct NPDMFilesystemAccess {
+pub struct FsAccessControl {
     permissions: HexOrNum,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct NpdmJson {
-    // META fields.
+pub struct NpdmInput {
+    // META fields
     name: String,
+    product_code: Option<String>,
+    signature_key_generation: Option<u32>,
     main_thread_stack_size: HexOrNum,
     main_thread_priority: u8,
-    default_cpu_id: u8,
-    // We thought this field was the process_category. We were wrong. 🤦
-    #[serde(alias = "process_category")]
-    version: u32,
+    #[serde(alias = "default_cpu_id")]
+    main_thread_core_number: u8,
+    system_resource_size: Option<u32>,
+    #[serde(alias = "process_category")] // We thought this field was the process_category. We were wrong. 🤦
+    version: Option<u32>,
     address_space_type: u8,
     is_64_bit: bool,
+    optimize_memory_allocation: Option<bool>,
+    disable_device_address_space_merge: Option<bool>,
 
     // ACID fields
-    is_retail: bool,
-    pool_partition: u32,
-    title_id_range_min: Option<HexOrNum>,
-    title_id_range_max: Option<HexOrNum>,
-    developer_key: Option<String>,
+    #[serde(alias = "is_retail")]
+    is_production: Option<bool>,
+    unqualified_approval: Option<bool>,
+    #[serde(alias = "pool_partition")]
+    memory_region: u32,
+    #[serde(alias = "title_id_range_min")]
+    program_id_range_min: Option<HexOrNum>,
+    #[serde(alias = "title_id_range_max")]
+    program_id_range_max: Option<HexOrNum>,
 
-    // ACI0
-    title_id: HexOrNum,
+    // ACI0 fields
+    #[serde(alias = "title_id")]
+    program_id: HexOrNum,
 
     // FAC
-    filesystem_access: NPDMFilesystemAccess,
+    filesystem_access: FsAccessControl,
 
     // SAC
-    service_access: Vec<String>,
-    service_host: Vec<String>,
+    #[serde(alias = "service_access")]
+    accessed_services: Vec<String>,
+    #[serde(alias = "service_host")]
+    hosted_services: Vec<String>,
 
     // KAC
     kernel_capabilities: Vec<KernelCapability>,
+
+    // Other
+    developer_key: Option<String>,
 }
 
-pub enum ACIDBehavior<'a> {
+pub enum AcidBehavior<'a> {
     Sign { pem_file_path: &'a Path },
     Empty,
     Use { acid_file_path: &'a Path }
 }
 
-impl NpdmJson {
-    pub fn from_file(file: &Path) -> Result<NpdmJson, Error> {
+impl NpdmInput {
+    pub fn from_json(file: &Path) -> Result<NpdmInput, Error> {
         let file = std::fs::File::open(file)?;
         match serde_json::from_reader(file) {
             Ok(res) => Ok(res),
@@ -193,10 +291,11 @@ impl NpdmJson {
     }
 
     // TODO: Optionally pass a (signed) ACID here.
-    pub fn into_npdm<W: Write>(&self, mut file: W, acid_behavior: ACIDBehavior) -> Result<(), Error> {
+    pub fn into_npdm<W: Write>(&self, mut file: W, acid_behavior: AcidBehavior) -> Result<(), Error> {
         let mut meta: RawMeta = RawMeta::default();
 
         meta.magic = *b"META";
+        meta.signature_key_generation = self.signature_key_generation.unwrap_or(0);
 
         if self.address_space_type & !3 != 0 {
             return Err(Error::InvalidNpdmValue {
@@ -204,42 +303,51 @@ impl NpdmJson {
                 backtrace: Backtrace::generate()
             });
         }
-        meta.mmu_flags = (self.address_space_type & 3) << 1;
-        if self.is_64_bit { meta.mmu_flags |= 1; }
 
-        meta.main_thread_prio = self.main_thread_priority;
-        meta.main_thread_core_num = self.default_cpu_id;
+        meta.flags = (self.address_space_type & 3) << 1;
+        if self.is_64_bit {
+            meta.flags |= 1 << 0;
+        }
+        if self.optimize_memory_allocation.unwrap_or(false) {
+            meta.flags |= 1 << 4;
+        }
+        if self.disable_device_address_space_merge.unwrap_or(false) {
+            meta.flags |= 1 << 5;
+        }
 
-        meta.system_resources = 0;
-        meta.version = 0;
+        meta.main_thread_priority = self.main_thread_priority;
+        meta.main_thread_core_number = self.main_thread_core_number;
+
+        meta.system_resource_size = self.system_resource_size.unwrap_or(0);
+        meta.version = self.version.unwrap_or(0);
 
         meta.main_thread_stack_size = self.main_thread_stack_size.0 as _;
 
-        let title_name_len = std::cmp::min(self.name.as_bytes().len(), 12);
-        meta.title_name = [0; 16];
-        meta.title_name[..title_name_len].copy_from_slice(&self.name.as_bytes()[..title_name_len]);
+        let name_len = std::cmp::min(self.name.as_bytes().len(), 12);
+        meta.name = [0; 0x10];
+        meta.name[..name_len].copy_from_slice(&self.name.as_bytes()[..name_len]);
 
         meta.product_code = [0; 0x10];
 
         meta.acid_offset = size_of::<RawMeta>() as u32;
         meta.acid_size = match acid_behavior {
-            ACIDBehavior::Sign { .. } | ACIDBehavior::Empty => {
-                (0x100 + size_of::<RawAcid>() + size_of::<RawFileSystemAccessControl>() +
-                    sac_encoded_len(&self.service_host) + sac_encoded_len(&self.service_access) +
-                    self.kernel_capabilities.iter().map(|v| v.encode().len() * 4).sum::<usize>()) as u32
+            AcidBehavior::Sign { .. } | AcidBehavior::Empty => {
+                (0x100 + size_of::<RawAcid>() + size_of::<RawAcidFsAccessControl>() +
+                    sac_encoded_len(&self.hosted_services) + sac_encoded_len(&self.accessed_services) +
+                    self.kernel_capabilities.iter().map(|v| v.encode().unwrap().len() * 4).sum::<usize>()) as u32
             },
-            ACIDBehavior::Use { acid_file_path } => std::fs::metadata(acid_file_path)?.len() as u32,
+            AcidBehavior::Use { acid_file_path } => std::fs::metadata(acid_file_path)?.len() as u32,
         };
 
         meta.aci_offset = meta.acid_offset + meta.acid_size;
-        meta.aci_size = (size_of::<RawAci>() + size_of::<RawFileSystemAccessHeader>() +
-            sac_encoded_len(&self.service_host) + sac_encoded_len(&self.service_access) +
-            self.kernel_capabilities.iter().map(|v| v.encode().len() * 4).sum::<usize>()) as u32;
+        meta.aci_size = (size_of::<RawAci>() + size_of::<RawAciFsAccessControl>() +
+            sac_encoded_len(&self.hosted_services) + sac_encoded_len(&self.accessed_services) +
+            self.kernel_capabilities.iter().map(|v| v.encode().unwrap().len() * 4).sum::<usize>()) as u32;
 
             bincode::DefaultOptions::new().with_fixint_encoding().allow_trailing_bytes().with_no_limit().with_little_endian().serialize_into(&mut file, &meta)?;
 
         match acid_behavior {
-            ACIDBehavior::Sign { pem_file_path } => {
+            AcidBehavior::Sign { pem_file_path } => {
                 // Parse PEM file
                 let pkey = get_pkey_from_pem(pem_file_path)?;
 
@@ -256,11 +364,11 @@ impl NpdmJson {
 
                 write_acid(&mut file, self, &meta)?;
             },
-            ACIDBehavior::Empty => {
+            AcidBehavior::Empty => {
                 file.write_all(&[0; 0x100])?;
                 write_acid(&mut file, self, &meta)?;
             }
-            ACIDBehavior::Use { acid_file_path } => {
+            AcidBehavior::Use { acid_file_path } => {
                 let mut acid_file = std::fs::File::open(acid_file_path)?;
                 std::io::copy(&mut acid_file, &mut file)?;
             }
@@ -269,31 +377,31 @@ impl NpdmJson {
         // ACI0
         let mut aci0 = RawAci::default();
         aci0.magic = *b"ACI0";
-        aci0.titleid = self.title_id.0;
+        aci0.program_id = self.program_id.0;
         aci0.fs_access_header_offset = size_of::<RawAci>() as u32;
-        aci0.fs_access_header_size = size_of::<RawFileSystemAccessHeader>() as u32;
-        aci0.service_access_control_offset = aci0.fs_access_header_offset + aci0.fs_access_header_size;
-        aci0.service_access_control_size = (sac_encoded_len(&self.service_host) + sac_encoded_len(&self.service_access)) as u32;
-        aci0.kernel_access_control_offset = aci0.service_access_control_offset + aci0.service_access_control_size;
-        aci0.kernel_access_control_size = self.kernel_capabilities.iter().map(|v| v.encode().len() * 4).sum::<usize>() as u32;
+        aci0.fs_access_header_size = size_of::<RawAciFsAccessControl>() as u32;
+        aci0.accessed_services_control_offset = aci0.fs_access_header_offset + aci0.fs_access_header_size;
+        aci0.accessed_services_control_size = (sac_encoded_len(&self.hosted_services) + sac_encoded_len(&self.accessed_services)) as u32;
+        aci0.kernel_access_control_offset = aci0.accessed_services_control_offset + aci0.accessed_services_control_size;
+        aci0.kernel_access_control_size = self.kernel_capabilities.iter().map(|v| v.encode().unwrap().len() * 4).sum::<usize>() as u32;
 
         bincode::DefaultOptions::new().with_fixint_encoding().allow_trailing_bytes().with_no_limit().with_little_endian().serialize_into(&mut file, &aci0)?;
 
-        let mut fah = RawFileSystemAccessHeader::default();
-        fah.version = 1;
-        fah.padding = [0; 3];
-        fah.permissions_bitmask.copy_from_slice(&self.filesystem_access.permissions.0.to_le_bytes());
-        fah.data_size = 0x1C; // Always 0x1C
-        fah.size_of_content_owner_id = 0;
-        fah.data_size_plus_content_owner_size = 0x1C;
-        fah.size_of_save_data_owners = 0;
+        let mut aci0_fah = RawAciFsAccessControl::default();
+        aci0_fah.version = 1;
+        aci0_fah.padding = [0; 3];
+        aci0_fah.fs_access_flags_bitmask.copy_from_slice(&self.filesystem_access.permissions.0.to_le_bytes());
+        aci0_fah.content_owner_info_offset = 0x1C; // Always 0x1C
+        aci0_fah.content_owner_info_size = 0;
+        aci0_fah.save_data_owner_info_offset = 0x1C;
+        aci0_fah.save_data_owner_info_size = 0;
 
-        bincode::DefaultOptions::new().with_fixint_encoding().allow_trailing_bytes().with_no_limit().with_little_endian().serialize_into(&mut file, &fah)?;
+        bincode::DefaultOptions::new().with_fixint_encoding().allow_trailing_bytes().with_no_limit().with_little_endian().serialize_into(&mut file, &aci0_fah)?;
 
-        for elem in &self.service_access {
+        for elem in &self.accessed_services {
             if elem.len() & !7 != 0 || elem.len() == 0 {
                 return Err(Error::InvalidNpdmValue{
-                    error: format!("service_access.{}", elem).into(),
+                    error: format!("accessed_services.{}", elem).into(),
                     backtrace: Backtrace::generate()
                 });
             }
@@ -301,10 +409,10 @@ impl NpdmJson {
             file.write_all(elem.as_bytes())?;
         }
 
-        for elem in &self.service_host {
+        for elem in &self.hosted_services {
             if elem.len() & !7 != 0 || elem.len() == 0 {
                 return Err(Error::InvalidNpdmValue{
-                    error: format!("service_host.{}", elem).into(),
+                    error: format!("hosted_services.{}", elem).into(),
                     backtrace: Backtrace::generate()
                 });
             }
@@ -313,7 +421,7 @@ impl NpdmJson {
         }
 
         for elem in &self.kernel_capabilities {
-            let encoded = elem.encode().iter().map(|v| v.to_le_bytes().to_vec()).flatten().collect::<Vec<u8>>();
+            let encoded = elem.encode()?.iter().map(|v| v.to_le_bytes().to_vec()).flatten().collect::<Vec<u8>>();
             file.write_all(&encoded)?;
         }
 
@@ -361,7 +469,7 @@ fn get_pkey_from_pem(path: &Path) -> Result<RSAPrivateKey, Error> {
     Ok(pkey)
 }
 
-fn write_acid<T: Write>(mut writer: &mut T, npdm: &NpdmJson, meta: &RawMeta) -> Result<(), Error> {
+fn write_acid<T: Write>(mut writer: &mut T, npdm: &NpdmInput, meta: &RawMeta) -> Result<(), Error> {
     let mut acid = RawAcid::default();
 
     if let Some(devkey) = &npdm.developer_key {
@@ -372,46 +480,56 @@ fn write_acid<T: Write>(mut writer: &mut T, npdm: &NpdmJson, meta: &RawMeta) -> 
     acid.signed_size = meta.acid_size - 0x100;
 
     acid.flags = 0u32;
-    if npdm.is_retail { acid.flags |= 1; }
+    if npdm.is_production.unwrap_or(true) {
+        acid.flags |= 1 << 0;
+    }
+    if npdm.unqualified_approval.unwrap_or(false) {
+        acid.flags |= 1 << 1;
+    }
 
-    if npdm.pool_partition & !3 != 0 {
+    if npdm.memory_region & !3 != 0 {
         return Err(Error::InvalidNpdmValue{
-            error: format!("pool_partition").into(),
+            error: format!("memory_region").into(),
             backtrace: Backtrace::generate()
         });
     }
-    acid.flags |= (npdm.pool_partition & 3) << 2;
-    // TODO: Unqualified approval. Zefuk is this?
+    acid.flags |= (npdm.memory_region & 3) << 2;
 
-    acid.titleid_range_min = npdm.title_id_range_min.as_ref().unwrap_or(&npdm.title_id).0;
-    acid.titleid_range_max = npdm.title_id_range_max.as_ref().unwrap_or(&npdm.title_id).0;
+    acid.program_id_range_min = npdm.program_id_range_min.as_ref().unwrap_or(&npdm.program_id).0;
+    acid.program_id_range_max = npdm.program_id_range_max.as_ref().unwrap_or(&npdm.program_id).0;
 
     acid.fs_access_control_offset = 0x100 + size_of::<RawAcid>() as u32;
-    acid.fs_access_control_size = size_of::<RawFileSystemAccessControl>() as u32;
+    acid.fs_access_control_size = size_of::<RawAcidFsAccessControl>() as u32;
 
-    acid.service_access_control_offset = acid.fs_access_control_offset + acid.fs_access_control_size;
-    acid.service_access_control_size = (sac_encoded_len(&npdm.service_host) + sac_encoded_len(&npdm.service_access)) as u32;
+    acid.accessed_services_control_offset = acid.fs_access_control_offset + acid.fs_access_control_size;
+    acid.accessed_services_control_size = (sac_encoded_len(&npdm.hosted_services) + sac_encoded_len(&npdm.accessed_services)) as u32;
 
-    acid.kernel_access_control_offset = acid.service_access_control_offset + acid.service_access_control_size;
-    acid.kernel_access_control_size = npdm.kernel_capabilities.iter().map(|v| v.encode().len() * 4).sum::<usize>() as u32;
+    acid.kernel_access_control_offset = acid.accessed_services_control_offset + acid.accessed_services_control_size;
+    acid.kernel_access_control_size = npdm.kernel_capabilities.iter().map(|v| v.encode().unwrap().len() * 4).sum::<usize>() as u32;
 
-    let mut fac = RawFileSystemAccessControl::default();
-    fac.version = 1;
-    fac.padding = [0; 3];
-    fac.permissions_bitmask.copy_from_slice(&npdm.filesystem_access.permissions.0.to_le_bytes());
+    let mut acid_fac = RawAcidFsAccessControl::default();
+    acid_fac.version = 1;
+    acid_fac.content_owner_id_count = 0;
+    acid_fac.save_data_owner_id_count = 0;
+    acid_fac.padding = 0;
+    acid_fac.fs_access_flags_bitmask.copy_from_slice(&npdm.filesystem_access.permissions.0.to_le_bytes());
+    acid_fac.content_owner_id_min = 0;
+    acid_fac.content_owner_id_max = 0;
+    acid_fac.save_data_owner_id_min = 0;
+    acid_fac.save_data_owner_id_max = 0;
 
     let mut final_size = bincode::DefaultOptions::new().with_fixint_encoding().allow_trailing_bytes().with_no_limit().with_little_endian().serialized_size(&acid)?;
     assert_eq!(final_size as usize, size_of::<RawAcid>(), "Serialized ACID has wrong size");
     bincode::DefaultOptions::new().with_fixint_encoding().allow_trailing_bytes().with_no_limit().with_little_endian().serialize_into(&mut writer, &acid)?;
 
-    final_size += bincode::DefaultOptions::new().with_fixint_encoding().allow_trailing_bytes().with_no_limit().with_little_endian().serialized_size(&fac)?;
-    assert_eq!(final_size as usize, size_of::<RawAcid>() + size_of::<RawFileSystemAccessControl>(), "Serialized FAC has wrong size");
-    bincode::DefaultOptions::new().with_fixint_encoding().allow_trailing_bytes().with_no_limit().with_little_endian().serialize_into(&mut writer, &fac)?;
+    final_size += bincode::DefaultOptions::new().with_fixint_encoding().allow_trailing_bytes().with_no_limit().with_little_endian().serialized_size(&acid_fac)?;
+    assert_eq!(final_size as usize, size_of::<RawAcid>() + size_of::<RawAcidFsAccessControl>(), "Serialized FAC has wrong size");
+    bincode::DefaultOptions::new().with_fixint_encoding().allow_trailing_bytes().with_no_limit().with_little_endian().serialize_into(&mut writer, &acid_fac)?;
 
-    for elem in &npdm.service_access {
+    for elem in &npdm.accessed_services {
         if elem.len() & !7 != 0 || elem.len() == 0 {
             return Err(Error::InvalidNpdmValue{
-                error: format!("service_access.{}", elem).into(),
+                error: format!("accessed_services.{}", elem).into(),
                 backtrace: Backtrace::generate()
             });
         }
@@ -421,10 +539,10 @@ fn write_acid<T: Write>(mut writer: &mut T, npdm: &NpdmJson, meta: &RawMeta) -> 
         writer.write_all(elem.as_bytes())?;
     }
 
-    for elem in &npdm.service_host {
+    for elem in &npdm.hosted_services {
         if elem.len() & !7 != 0 || elem.len() == 0 {
             return Err(Error::InvalidNpdmValue{
-                error: format!("service_host.{}", elem).into(),
+                error: format!("hosted_services.{}", elem).into(),
                 backtrace: Backtrace::generate()
             });
         }
@@ -434,64 +552,70 @@ fn write_acid<T: Write>(mut writer: &mut T, npdm: &NpdmJson, meta: &RawMeta) -> 
         writer.write_all(elem.as_bytes())?;
     }
 
-    assert_eq!(final_size as usize, size_of::<RawAcid>() + size_of::<RawFileSystemAccessControl>()
-        + sac_encoded_len(&npdm.service_access) + sac_encoded_len(&npdm.service_host), "Serialized SAC has wrong size");
+    assert_eq!(final_size as usize, size_of::<RawAcid>() + size_of::<RawAcidFsAccessControl>()
+        + sac_encoded_len(&npdm.accessed_services) + sac_encoded_len(&npdm.hosted_services), "Serialized SAC has wrong size");
 
     for elem in &npdm.kernel_capabilities {
-        let encoded = elem.encode().iter().map(|v| v.to_le_bytes().to_vec()).flatten().collect::<Vec<u8>>();
+        let encoded = elem.encode()?.iter().map(|v| v.to_le_bytes().to_vec()).flatten().collect::<Vec<u8>>();
         final_size += encoded.len() as u64;
         writer.write_all(&encoded)?;
     }
 
-    assert_eq!(final_size as usize, size_of::<RawAcid>() + size_of::<RawFileSystemAccessControl>()
-        + sac_encoded_len(&npdm.service_access) + sac_encoded_len(&npdm.service_host)
-        + npdm.kernel_capabilities.iter().map(|v| v.encode().len() * 4).sum::<usize>(), "Serialized KAC has wrong size");
+    assert_eq!(final_size as usize, size_of::<RawAcid>() + size_of::<RawAcidFsAccessControl>()
+        + sac_encoded_len(&npdm.accessed_services) + sac_encoded_len(&npdm.hosted_services)
+        + npdm.kernel_capabilities.iter().map(|v| v.encode().unwrap().len() * 4).sum::<usize>(), "Serialized KAC has wrong size");
 
     Ok(())
 }
 
 #[repr(C)]
 #[derive(Default, Clone, Copy, Serialize)]
-struct RawFileSystemAccessControl {
+struct RawAciFsAccessControl {
     version: u8,
     padding: [u8; 3],
     // Work around broken alignment. It sucks.
-    permissions_bitmask: [u8; 8],
-    reserved: [u8; 0x20]
+    fs_access_flags_bitmask: [u8; 8],
+    content_owner_info_offset: u32, // Always 0x1C
+    content_owner_info_size: u32,
+    save_data_owner_info_offset: u32,
+    save_data_owner_info_size: u32,
+    // TODO: more variable stuff afterwards
 }
 
-#[repr(C)]
+#[repr(C, packed)]
 #[derive(Default, Clone, Copy, Serialize)]
-struct RawFileSystemAccessHeader {
+struct RawAcidFsAccessControl {
     version: u8,
-    padding: [u8; 3],
+    content_owner_id_count: u8, // 5.0.0+
+    save_data_owner_id_count: u8, // 5.0.0+
+    padding: u8,
     // Work around broken alignment. It sucks.
-    permissions_bitmask: [u8; 8],
-    data_size: u32, // Always 0x1C
-    size_of_content_owner_id: u32,
-    data_size_plus_content_owner_size: u32,
-    size_of_save_data_owners: u32,
-    // TODO: there's more optional stuff afterwards.
+    fs_access_flags_bitmask: [u8; 8],
+    content_owner_id_min: u64,
+    content_owner_id_max: u64,
+    save_data_owner_id_min: u64,
+    save_data_owner_id_max: u64,
+    // TODO: more variable stuff afterwards
 }
 
 #[repr(C)]
 #[derive(Default, Clone, Copy, Serialize)]
 struct RawMeta {
     magic: [u8; 4],
+    signature_key_generation: u32, // 9.0.0+
     #[doc(hidden)]
-    reserved4: u32,
     reserved8: u32,
-    mmu_flags: u8,
+    flags: u8,
     #[doc(hidden)]
     reserved13: u8,
-    main_thread_prio: u8,
-    main_thread_core_num: u8,
+    main_thread_priority: u8,
+    main_thread_core_number: u8,
     #[doc(hidden)]
     reserved16: u32,
-    system_resources: u32,
+    system_resource_size: u32,
     version: u32,
     main_thread_stack_size: u32,
-    title_name: [u8; 16],
+    name: [u8; 16],
     product_code: [u8; 16],
     #[doc(hidden)]
     reserved64: Reserved64,
@@ -519,12 +643,12 @@ struct RawAcid {
     #[doc(hidden)]
     reserved: u32,
     flags: u32,
-    titleid_range_min: u64,
-    titleid_range_max: u64,
+    program_id_range_min: u64,
+    program_id_range_max: u64,
     fs_access_control_offset: u32,
     fs_access_control_size: u32,
-    service_access_control_offset: u32,
-    service_access_control_size: u32,
+    accessed_services_control_offset: u32,
+    accessed_services_control_size: u32,
     kernel_access_control_offset: u32,
     kernel_access_control_size: u32,
     #[doc(hidden)]
@@ -541,13 +665,13 @@ struct RawAci {
     magic: [u8; 4],
     #[doc(hidden)]
     reserved4: [u8; 0xC],
-    titleid: u64,
+    program_id: u64,
     #[doc(hidden)]
     reserved24: u64,
     fs_access_header_offset: u32,
     fs_access_header_size: u32,
-    service_access_control_offset: u32,
-    service_access_control_size: u32,
+    accessed_services_control_offset: u32,
+    accessed_services_control_size: u32,
     kernel_access_control_offset: u32,
     kernel_access_control_size: u32,
     #[doc(hidden)]

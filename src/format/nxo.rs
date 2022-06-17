@@ -703,7 +703,7 @@ impl NxoFile {
         let caps = npdm
             .kernel_capabilities
             .iter()
-            .map(|v| v.encode())
+            .map(|v| v.encode().unwrap())
             .flatten()
             .collect::<Vec<u32>>();
         assert!(
