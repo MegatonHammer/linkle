@@ -80,7 +80,7 @@ impl KernelVersion {
                 if ver_strs.len() == 2 {
                     if let Ok(major) = u32::from_str_radix(ver_strs[0], 10) {
                         if let Ok(minor) = u32::from_str_radix(ver_strs[1], 10) {
-                            return Some(*0u16.set_bits(0..4, major as u16).set_bits(4..16, minor as u16))
+                            return Some(*0u16.set_bits(0..4, minor as u16).set_bits(4..16, major as u16))
                         }
                     }
                 }
