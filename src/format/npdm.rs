@@ -254,14 +254,14 @@ pub struct KernelCapabilities {
     lowest_priority: u8,
     max_core_number: u8,
     min_core_number: u8,
-    enabled_system_calls: Vec<EnabledSystemCall>,
+    enable_system_calls: Vec<EnabledSystemCall>,
     memory_maps: Option<Vec<MemoryMap>>,
     io_memory_maps: Option<Vec<HexOrNum>>,
     enable_interrupts: Option<Vec<[u16; 2]>>,
-    program_type: ProgramType,
-    kernel_version: KernelVersion,
-    enable_debug: bool,
-    force_debug: bool
+    program_type: Option<ProgramType>,
+    kernel_version: Option<KernelVersion>,
+    enable_debug: Option<bool>,
+    force_debug: Option<bool>
 }
 
 impl KernelCapabilities {
@@ -276,9 +276,9 @@ impl KernelCapabilities {
         };
         kern_caps.push(thread_info_kcap);
 
-        let enabled_svc_ids: Vec<svc::SystemCallId> = self.enabled_system_calls.iter().map(|svc| svc.get_id()).collect();
-        let enabled_svcs_kcap = KernelCapability::EnableSystemCalls(SystemCalls::Name(enabled_svc_ids));
-        kern_caps.push(enabled_svcs_kcap);
+        let enable_svc_ids: Vec<svc::SystemCallId> = self.enable_system_calls.iter().map(|svc| svc.get_id()).collect();
+        let enable_svcs_kcap = KernelCapability::EnableSystemCalls(SystemCalls::Name(enable_svc_ids));
+        kern_caps.push(enable_svcs_kcap);
 
         if let Some(mem_maps) = &self.memory_maps {
             for mem_map in mem_maps.iter() {
@@ -306,17 +306,23 @@ impl KernelCapabilities {
             }
         }
 
-        let misc_params_kcap = KernelCapability::MiscParams(self.program_type.clone());
-        kern_caps.push(misc_params_kcap);
+        if let Some(program_type) = &self.program_type {
+            let misc_params_kcap = KernelCapability::MiscParams(program_type.clone());
+            kern_caps.push(misc_params_kcap);
+        }
 
-        let kern_version_kcap = KernelCapability::KernelVersion(self.kernel_version.clone());
-        kern_caps.push(kern_version_kcap);
+        if let Some(kernel_version) = &self.kernel_version {
+            let kern_version_kcap = KernelCapability::KernelVersion(kernel_version.clone());
+            kern_caps.push(kern_version_kcap);
+        }
 
-        let misc_flags_kcap = KernelCapability::MiscFlags {
-            enable_debug: self.enable_debug,
-            force_debug: self.force_debug
-        };
-        kern_caps.push(misc_flags_kcap);
+        if self.enable_debug.is_some() || self.force_debug.is_some() {
+            let misc_flags_kcap = KernelCapability::MiscFlags {
+                enable_debug: self.enable_debug.unwrap_or(false),
+                force_debug: self.force_debug.unwrap_or(false)
+            };
+            kern_caps.push(misc_flags_kcap);
+        }
 
         kern_caps
     }
