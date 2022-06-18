@@ -50,7 +50,7 @@ pub fn calculate_sha256(data: &[u8]) -> std::io::Result<Vec<u8>> {
     Ok(Vec::from(hasher.finalize().as_slice()))
 }
 
-#[derive(Default)]
+#[derive(Default, Copy, Clone)]
 pub struct HexOrNum(pub u64);
 
 impl fmt::Debug for HexOrNum {
