@@ -93,7 +93,7 @@ This is an example of a compatible JSON:
     "default_name": "Link",
     "default_author": "Linkle",
     "version": "1.0.0",
-    "presence_group_id": "0100AAAABBBBCCCC",
+    "application_id": "0100AAAABBBBCCCC",
     "startup_user_account": "Required",
     "titles": {
         "ja": {
