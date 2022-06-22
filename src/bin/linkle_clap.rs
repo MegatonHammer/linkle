@@ -122,7 +122,7 @@ fn create_nxo(
     output_file: &str,
     icon_file: Option<&str>,
     romfs_dir: Option<&str>,
-    nacp_file: Option<&str>,
+    nacp_input: Option<&str>,
 ) -> Result<(), linkle::error::Error> {
     let romfs_dir = if let Some(romfs_path) = romfs_dir {
         Some(linkle::format::romfs::RomFs::from_directory(Path::new(
@@ -131,9 +131,9 @@ fn create_nxo(
     } else {
         None
     };
-    let nacp_file = if let Some(nacp_path) = nacp_file {
+    let nacp_input = if let Some(nacp_path) = nacp_input {
         Some(
-            linkle::format::nacp::NacpFile::from_file(&nacp_path)
+            linkle::format::nacp::NacpInput::from_json(&nacp_path)
                 .map_err(|err| (err, &nacp_path))?,
         )
     } else {
@@ -149,7 +149,7 @@ fn create_nxo(
             let mut out_file = output_option
                 .open(output_file)
                 .map_err(|err| (err, output_file))?;
-            nxo.write_nro(&mut out_file, romfs_dir, icon_file.as_deref(), nacp_file)
+            nxo.write_nro(&mut out_file, romfs_dir, icon_file.as_deref(), nacp_input)
                 .map_err(|err| (err, output_file))?;
         }
         "nso" => {
@@ -222,7 +222,7 @@ fn extract_pfs0(input_path: &str, output_directory: &str) -> Result<(), linkle::
 }
 
 fn create_nacp(input_file: &str, output_file: &str) -> Result<(), linkle::error::Error> {
-    let mut nacp = linkle::format::nacp::NacpFile::from_file(&input_file)?;
+    let mut nacp = linkle::format::nacp::NacpInput::from_json(&input_file)?;
     let mut option = OpenOptions::new();
     let output_option = option.write(true).create(true).truncate(true);
     let mut out_file = output_option

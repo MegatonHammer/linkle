@@ -1,7 +1,7 @@
 use serde_derive::{Serialize, Deserialize};
 
-#[repr(u32)]
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+#[repr(u32)]
 pub enum SystemCallId {
     SetHeapSize = 0x01,
     SetMemoryPermission = 0x02,

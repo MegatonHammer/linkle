@@ -1,5 +1,5 @@
 use crate::format::utils::HexOrNum;
-use crate::format::{nacp::NacpFile, npdm::KernelCapability, romfs::RomFs, utils};
+use crate::format::{nacp::NacpInput, npdm::KernelCapability, romfs::RomFs, utils};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use elf::types::{Machine, ProgramHeader, SectionHeader, EM_AARCH64, EM_ARM, PT_LOAD, SHT_NOTE};
 use serde_derive::{Deserialize, Serialize};
@@ -212,7 +212,7 @@ impl NxoFile {
         output_writter: &mut T,
         romfs: Option<RomFs>,
         icon: Option<&str>,
-        nacp: Option<NacpFile>,
+        nacp: Option<NacpInput>,
     ) -> std::io::Result<()>
     where
         T: Write,
