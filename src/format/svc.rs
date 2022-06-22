@@ -48,7 +48,7 @@ pub enum SystemCallId {
     FlushDataCache = 0x2B,
     MapPhysicalMemory = 0x2C,
     UnmapPhysicalMemory = 0x2D,
-    GetFutureThreadInfo = 0x2E,
+    GetDebugFutureThreadInfo = 0x2E, // GetFutureThreadInfo before 6.0.0
     GetLastThreadInfo = 0x2F,
     GetResourceLimitLimitValue = 0x30,
     GetResourceLimitCurrentValue = 0x31,
@@ -60,7 +60,7 @@ pub enum SystemCallId {
     GetResourceLimitPeakValue = 0x37,
     CreateIoPool = 0x39,
     CreateIoRegion = 0x3A,
-    DumpInfo = 0x3C, // KernelDebug in 4.0.0+
+    KernelDebug = 0x3C, // DumpInfo before 4.0.0
     ChangeKernelTraceState = 0x3D,
     CreateSession = 0x40,
     AcceptSession = 0x41,

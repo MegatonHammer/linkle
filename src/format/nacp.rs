@@ -78,7 +78,6 @@ pub struct Nacp {
     pub add_on_content_base_id: Option<String>,
     #[serde(alias = "lang")]
     pub titles: Option<ApplicationTitles>,
-
     pub isbn: Option<String>,
     pub startup_user_account: Option<StartupUserAccount>,
     pub attribute: Option<Attribute>,
@@ -90,6 +89,7 @@ pub struct Nacp {
     pub bcat_passphrase: Option<String>,
     pub program_index: Option<u8>,
     pub save_data_owner_id: Option<String>,
+    // TODO: support more NACP fields
 }
 
 #[allow(clippy::len_without_is_empty)]
