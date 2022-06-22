@@ -4,117 +4,68 @@ use serde_derive::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::Write;
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
-#[repr(u8)]
-pub enum StartupUserAccount {
-    None = 0,
-    Required = 1,
-    RequiredWithNetworkServiceAccountAvailable = 2,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
-#[repr(u32)]
-pub enum Attribute {
-    None = 0,
-    Demo = 1,
-    RetailInteractiveDisplay = 2,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
-#[repr(u8)]
-pub enum Screenshot {
-    Allow = 0,
-    Deny = 1,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
-#[repr(u8)]
-pub enum VideoCapture {
-    Disabled = 0,
-    Enabled = 1,
-    Automatic = 2,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
-#[repr(u8)]
-pub enum LogoType {
-    LicensedByNintendo = 0,
-    Nintendo = 2,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
-#[repr(u8)]
-pub enum LogoHandling {
-    Auto = 0,
-    Manual = 1,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
-#[repr(u8)]
-pub enum CrashReport {
-    Deny = 0,
-    Allow = 1,
-}
+mod fmt;
+use fmt::*;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct NacpApplicationTitle {
+pub struct ApplicationTitle {
     pub name: String,
     pub author: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct NacpApplicationTitles {
+pub struct ApplicationTitles {
     #[serde(alias = "en-US", alias = "AmericanEnglish")]
-    pub en_us: Option<NacpApplicationTitle>,
+    pub en_us: Option<ApplicationTitle>,
 
     #[serde(alias = "en-GB", alias = "BritishEnglish")]
-    pub en_gb: Option<NacpApplicationTitle>,
+    pub en_gb: Option<ApplicationTitle>,
 
     #[serde(alias = "Japanese")]
-    pub ja: Option<NacpApplicationTitle>,
+    pub ja: Option<ApplicationTitle>,
 
     #[serde(alias = "French")]
-    pub fr: Option<NacpApplicationTitle>,
+    pub fr: Option<ApplicationTitle>,
 
     #[serde(alias = "German")]
-    pub de: Option<NacpApplicationTitle>,
+    pub de: Option<ApplicationTitle>,
 
     #[serde(alias = "es-419", alias = "LatinAmericanSpanish")]
-    pub es_419: Option<NacpApplicationTitle>,
+    pub es_419: Option<ApplicationTitle>,
 
     #[serde(alias = "Spanish")]
-    pub es: Option<NacpApplicationTitle>,
+    pub es: Option<ApplicationTitle>,
 
     #[serde(alias = "Italian")]
-    pub it: Option<NacpApplicationTitle>,
+    pub it: Option<ApplicationTitle>,
 
     #[serde(alias = "Dutch")]
-    pub nl: Option<NacpApplicationTitle>,
+    pub nl: Option<ApplicationTitle>,
 
     #[serde(alias = "fr-CA", alias = "CanadianFrench")]
-    pub fr_ca: Option<NacpApplicationTitle>,
+    pub fr_ca: Option<ApplicationTitle>,
 
     #[serde(alias = "Portuguese")]
-    pub pt: Option<NacpApplicationTitle>,
+    pub pt: Option<ApplicationTitle>,
 
     #[serde(alias = "Russian")]
-    pub ru: Option<NacpApplicationTitle>,
+    pub ru: Option<ApplicationTitle>,
 
     #[serde(alias = "Korean")]
-    pub ko: Option<NacpApplicationTitle>,
+    pub ko: Option<ApplicationTitle>,
 
     #[serde(alias = "zh-TW", alias = "TraditionalChinese")]
-    pub zh_tw: Option<NacpApplicationTitle>, // 4.0.0+
+    pub zh_tw: Option<ApplicationTitle>, // 4.0.0+
 
     #[serde(alias = "zh-CN", alias = "SimplifiedChinese")]
-    pub zh_cn: Option<NacpApplicationTitle>, // 4.0.0+
+    pub zh_cn: Option<ApplicationTitle>, // 4.0.0+
 
     #[serde(alias = "pt-BR", alias = "BrazilianPortuguese")]
-    pub pt_br: Option<NacpApplicationTitle>, // 10.0.0+
+    pub pt_br: Option<ApplicationTitle>, // 10.0.0+
 }
 
 #[derive(Serialize, Deserialize, Debug, Default)]
-pub struct NacpInput {
+pub struct Nacp {
     #[serde(alias = "name")]
     pub default_name: Option<String>,
     #[serde(alias = "author")]
@@ -126,7 +77,7 @@ pub struct NacpInput {
     #[serde(alias = "dlc_base_title_id")]
     pub add_on_content_base_id: Option<String>,
     #[serde(alias = "lang")]
-    pub titles: Option<NacpApplicationTitles>,
+    pub titles: Option<ApplicationTitles>,
 
     pub isbn: Option<String>,
     pub startup_user_account: Option<StartupUserAccount>,
@@ -142,7 +93,7 @@ pub struct NacpInput {
 }
 
 #[allow(clippy::len_without_is_empty)]
-impl NacpInput {
+impl Nacp {
     pub fn from_json(input: &str) -> std::io::Result<Self> {
         let file = File::open(input)?;
         match serde_json::from_reader(file) {
@@ -154,7 +105,7 @@ impl NacpInput {
     fn write_lang_entry<T>(
         &self,
         out_writer: &mut T,
-        lang_entry: &NacpApplicationTitle,
+        lang_entry: &ApplicationTitle,
     ) -> std::io::Result<()>
     where
         T: Write,
@@ -223,7 +174,7 @@ impl NacpInput {
         utils::check_string_or_truncate(&mut def_author, "default_author", 0x100);
 
         // fallback entry if titles entry isn't defined
-        let default_title = NacpApplicationTitle { name: def_name, author: def_author };
+        let default_title = ApplicationTitle { name: def_name, author: def_author };
         match &self.titles {
             None => {
                 for _ in 0..16 {
@@ -578,9 +529,9 @@ mod test {
     use super::*;
 
     #[test]
-    fn nacp_has_expected_size() {
-        let mut buf = Vec::new();
-        NacpInput::default().write(&mut buf).unwrap();
-        assert_eq!(buf.len(), 0x4000, "NACP length is wrong");
+    fn generated_nacp_has_expected_size() {
+        let mut gen_nacp_buf = Vec::new();
+        Nacp::default().write(&mut gen_nacp_buf).unwrap();
+        assert_eq!(gen_nacp_buf.len(), 0x4000, "NACP length is wrong");
     }
 }

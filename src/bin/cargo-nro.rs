@@ -22,7 +22,7 @@ use cargo_toml2::CargoConfig;
 use clap::{App, Arg};
 use goblin::elf::section_header::{SHT_NOBITS, SHT_STRTAB, SHT_SYMTAB};
 use goblin::elf::{Elf, Header as ElfHeader, ProgramHeader};
-use linkle::format::{nacp::NacpFile, nxo::NxoFile, romfs::RomFs};
+use linkle::format::{nacp::Nacp, nxo::Nxo, romfs::RomFs};
 use snafu::Snafu;
 
 #[derive(Debug, Snafu)]
@@ -214,7 +214,7 @@ fn generate_debuginfo_romfs<P: AsRef<Path>>(
 #[derive(Debug, Serialize, Deserialize, Default)]
 struct PackageMetadata {
     romfs: Option<String>,
-    nacp: Option<NacpFile>,
+    nacp: Option<Nacp>,
     icon: Option<String>,
     title_id: Option<String>,
 }
@@ -353,11 +353,11 @@ fn main() {
                 let icon_file = icon_file.as_ref().map(|v| v.as_ref());
 
                 let mut nacp = target_metadata.nacp.unwrap_or_default();
-                nacp.name.get_or_insert(package.name.clone());
-                nacp.author.get_or_insert(package.authors[0].clone());
-                nacp.version.get_or_insert(package.version.to_string());
-                if nacp.title_id.is_none() {
-                    nacp.title_id = target_metadata.title_id;
+                nacp.default_name.get_or_insert(package.name.clone());
+                nacp.default_author.get_or_insert(package.authors[0].clone());
+                nacp.version = package.version.to_string();
+                if nacp.application_id.is_none() {
+                    nacp.application_id = target_metadata.title_id;
                 }
 
                 let romfs =
@@ -366,7 +366,7 @@ fn main() {
                 let mut new_name = artifact.filenames[0].clone();
                 assert!(new_name.set_extension("nro"));
 
-                NxoFile::from_elf(artifact.filenames[0].to_str().unwrap())
+                Nxo::from_elf(artifact.filenames[0].to_str().unwrap())
                     .unwrap()
                     .write_nro(
                         &mut File::create(new_name.clone()).unwrap(),

@@ -1,7 +1,6 @@
 use crate::format::utils;
 use crate::format::utils::HexOrNum;
-use crate::format::utils::Reserved64;
-use crate::format::utils::SigOrPubKey;
+use crate::format::svc;
 use crate::error::Error;
 use bit_field::BitField;
 use bincode::Options;
@@ -15,7 +14,8 @@ use std::io::Write;
 use snafu::Backtrace;
 use rsa::{BigUint, RSAPrivateKey};
 
-pub mod svc;
+mod fmt;
+use fmt::*;
 
 // TODO: Pretty errors if the user messes up.
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -249,7 +249,7 @@ pub struct MemoryMap {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct KernelCapabilities {
+pub struct KernelCapabilityValues {
     highest_priority: u8,
     lowest_priority: u8,
     max_core_number: u8,
@@ -264,7 +264,7 @@ pub struct KernelCapabilities {
     force_debug: Option<bool>
 }
 
-impl KernelCapabilities {
+impl KernelCapabilityValues {
     pub fn to_list_format(&self) -> Vec<KernelCapability> {
         let mut kern_caps: Vec<KernelCapability> = Vec::new();
 
@@ -329,35 +329,35 @@ impl KernelCapabilities {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct NpdmFsAccessControl {
+pub struct FsAccessControl {
     #[serde(alias = "permissions")]
     flags: HexOrNum
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct NpdmServiceAccessControl {
+pub struct ServiceAccessControl {
     accessed_services: Vec<String>,
     hosted_services: Vec<String>
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
-pub enum NpdmKernelCapabilities {
+pub enum KernelCapabilities {
     TypeValueList(Vec<KernelCapability>),
-    Struct(KernelCapabilities)
+    Struct(KernelCapabilityValues)
 }
 
-impl NpdmKernelCapabilities {
+impl KernelCapabilities {
     pub fn get_list(&self) -> Vec<KernelCapability> {
         match self {
-            NpdmKernelCapabilities::TypeValueList(list) => list.to_vec(),
-            NpdmKernelCapabilities::Struct(kern_caps) => kern_caps.to_list_format()
+            KernelCapabilities::TypeValueList(list) => list.to_vec(),
+            KernelCapabilities::Struct(kern_caps) => kern_caps.to_list_format()
         }
     }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct NpdmInput {
+pub struct Npdm {
     // META fields
     name: String,
     product_code: Option<String>,
@@ -391,17 +391,17 @@ pub struct NpdmInput {
 
     // FAC
     #[serde(alias = "filesystem_access")]
-    fs_access_control: NpdmFsAccessControl,
+    fs_access_control: FsAccessControl,
 
     // SAC
     #[serde(alias = "service_access")]
     accessed_services: Option<Vec<String>>,
     #[serde(alias = "service_host")]
     hosted_services: Option<Vec<String>>,
-    service_access_control: Option<NpdmServiceAccessControl>,
+    service_access_control: Option<ServiceAccessControl>,
 
     // KAC
-    kernel_capabilities: NpdmKernelCapabilities,
+    kernel_capabilities: KernelCapabilities,
 
     // Other
     developer_key: Option<String>
@@ -413,8 +413,8 @@ pub enum AcidBehavior<'a> {
     Use { acid_file_path: &'a Path }
 }
 
-impl NpdmInput {
-    pub fn from_json(file: &Path) -> Result<NpdmInput, Error> {
+impl Npdm {
+    pub fn from_json(file: &Path) -> Result<Npdm, Error> {
         let file = std::fs::File::open(file)?;
         match serde_json::from_reader(file) {
             Ok(res) => Ok(res),
@@ -424,7 +424,7 @@ impl NpdmInput {
 
     // TODO: Optionally pass a (signed) ACID here.
     pub fn into_npdm<W: Write>(&self, mut file: W, acid_behavior: AcidBehavior) -> Result<(), Error> {
-        let mut meta: RawMeta = RawMeta::default();
+        let mut meta: Meta = Meta::default();
 
         meta.magic = *b"META";
         meta.signature_key_generation = self.signature_key_generation.unwrap_or(0);
@@ -482,10 +482,10 @@ impl NpdmInput {
 
         let kern_caps = self.kernel_capabilities.get_list();
 
-        meta.acid_offset = size_of::<RawMeta>() as u32;
+        meta.acid_offset = size_of::<Meta>() as u32;
         meta.acid_size = match acid_behavior {
             AcidBehavior::Sign { .. } | AcidBehavior::Empty => {
-                (0x100 + size_of::<RawAcid>() + size_of::<RawAcidFsAccessControl>() +
+                (0x100 + size_of::<Acid>() + size_of::<AcidFsAccessControl>() +
                     sac_encoded_len(&hosted_services) + sac_encoded_len(&accessed_services) +
                     kern_caps.iter().map(|v| v.encode().unwrap().len() * 4).sum::<usize>()) as u32
             },
@@ -493,7 +493,7 @@ impl NpdmInput {
         };
 
         meta.aci_offset = meta.acid_offset + meta.acid_size;
-        meta.aci_size = (size_of::<RawAci>() + size_of::<RawAciFsAccessControl>() +
+        meta.aci_size = (size_of::<Aci>() + size_of::<AciFsAccessControl>() +
             sac_encoded_len(&hosted_services) + sac_encoded_len(&accessed_services) +
             kern_caps.iter().map(|v| v.encode().unwrap().len() * 4).sum::<usize>()) as u32;
 
@@ -528,11 +528,11 @@ impl NpdmInput {
         }
 
         // ACI0
-        let mut aci0 = RawAci::default();
+        let mut aci0 = Aci::default();
         aci0.magic = *b"ACI0";
         aci0.program_id = self.program_id.0;
-        aci0.fs_access_control_offset = size_of::<RawAci>() as u32;
-        aci0.fs_access_control_size = size_of::<RawAciFsAccessControl>() as u32;
+        aci0.fs_access_control_offset = size_of::<Aci>() as u32;
+        aci0.fs_access_control_size = size_of::<AciFsAccessControl>() as u32;
         aci0.service_access_control_offset = aci0.fs_access_control_offset + aci0.fs_access_control_size;
         aci0.service_access_control_size = (sac_encoded_len(&hosted_services) + sac_encoded_len(&accessed_services)) as u32;
         aci0.kernel_access_control_offset = aci0.service_access_control_offset + aci0.service_access_control_size;
@@ -540,7 +540,7 @@ impl NpdmInput {
 
         bincode::DefaultOptions::new().with_fixint_encoding().allow_trailing_bytes().with_no_limit().with_little_endian().serialize_into(&mut file, &aci0)?;
 
-        let mut aci0_fac = RawAciFsAccessControl::default();
+        let mut aci0_fac = AciFsAccessControl::default();
         aci0_fac.version = 1;
         aci0_fac.padding = [0; 3];
         aci0_fac.fs_access_flags_bitmask.copy_from_slice(&self.fs_access_control.flags.0.to_le_bytes());
@@ -553,7 +553,7 @@ impl NpdmInput {
 
         for elem in accessed_services {
             if elem.len() & !7 != 0 || elem.len() == 0 {
-                return Err(Error::InvalidNpdmValue{
+                return Err(Error::InvalidNpdmValue {
                     error: format!("accessed_services.{}", elem).into(),
                     backtrace: Backtrace::generate()
                 });
@@ -564,7 +564,7 @@ impl NpdmInput {
 
         for elem in hosted_services {
             if elem.len() & !7 != 0 || elem.len() == 0 {
-                return Err(Error::InvalidNpdmValue{
+                return Err(Error::InvalidNpdmValue {
                     error: format!("hosted_services.{}", elem).into(),
                     backtrace: Backtrace::generate()
                 });
@@ -622,8 +622,8 @@ fn get_pkey_from_pem(path: &Path) -> Result<RSAPrivateKey, Error> {
     Ok(pkey)
 }
 
-fn write_acid<T: Write>(mut writer: &mut T, npdm: &NpdmInput, meta: &RawMeta, accessed_services: &Vec<String>, hosted_services: &Vec<String>, kern_caps: &Vec<KernelCapability>) -> Result<(), Error> {
-    let mut acid = RawAcid::default();
+fn write_acid<T: Write>(mut writer: &mut T, npdm: &Npdm, meta: &Meta, accessed_services: &Vec<String>, hosted_services: &Vec<String>, kern_caps: &Vec<KernelCapability>) -> Result<(), Error> {
+    let mut acid = Acid::default();
 
     if let Some(devkey) = &npdm.developer_key {
         acid.rsa_nca_pubkey.0.copy_from_slice(&hex::decode(devkey).unwrap());
@@ -641,7 +641,7 @@ fn write_acid<T: Write>(mut writer: &mut T, npdm: &NpdmInput, meta: &RawMeta, ac
     }
 
     if npdm.memory_region & !3 != 0 {
-        return Err(Error::InvalidNpdmValue{
+        return Err(Error::InvalidNpdmValue {
             error: format!("memory_region").into(),
             backtrace: Backtrace::generate()
         });
@@ -651,8 +651,8 @@ fn write_acid<T: Write>(mut writer: &mut T, npdm: &NpdmInput, meta: &RawMeta, ac
     acid.program_id_range_min = npdm.program_id_range_min.as_ref().unwrap_or(&npdm.program_id).0;
     acid.program_id_range_max = npdm.program_id_range_max.as_ref().unwrap_or(&npdm.program_id).0;
 
-    acid.fs_access_control_offset = 0x100 + size_of::<RawAcid>() as u32;
-    acid.fs_access_control_size = size_of::<RawAcidFsAccessControl>() as u32;
+    acid.fs_access_control_offset = 0x100 + size_of::<Acid>() as u32;
+    acid.fs_access_control_size = size_of::<AcidFsAccessControl>() as u32;
 
     acid.service_access_control_offset = acid.fs_access_control_offset + acid.fs_access_control_size;
     acid.service_access_control_size = (sac_encoded_len(hosted_services) + sac_encoded_len(accessed_services)) as u32;
@@ -660,7 +660,7 @@ fn write_acid<T: Write>(mut writer: &mut T, npdm: &NpdmInput, meta: &RawMeta, ac
     acid.kernel_access_control_offset = acid.service_access_control_offset + acid.service_access_control_size;
     acid.kernel_access_control_size = kern_caps.iter().map(|v| v.encode().unwrap().len() * 4).sum::<usize>() as u32;
 
-    let mut acid_fac = RawAcidFsAccessControl::default();
+    let mut acid_fac = AcidFsAccessControl::default();
     acid_fac.version = 1;
     acid_fac.content_owner_id_count = 0;
     acid_fac.save_data_owner_id_count = 0;
@@ -672,16 +672,16 @@ fn write_acid<T: Write>(mut writer: &mut T, npdm: &NpdmInput, meta: &RawMeta, ac
     acid_fac.save_data_owner_id_max = 0;
 
     let mut final_size = bincode::DefaultOptions::new().with_fixint_encoding().allow_trailing_bytes().with_no_limit().with_little_endian().serialized_size(&acid)?;
-    assert_eq!(final_size as usize, size_of::<RawAcid>(), "Serialized ACID has wrong size");
+    assert_eq!(final_size as usize, size_of::<Acid>(), "Serialized ACID has wrong size");
     bincode::DefaultOptions::new().with_fixint_encoding().allow_trailing_bytes().with_no_limit().with_little_endian().serialize_into(&mut writer, &acid)?;
 
     final_size += bincode::DefaultOptions::new().with_fixint_encoding().allow_trailing_bytes().with_no_limit().with_little_endian().serialized_size(&acid_fac)?;
-    assert_eq!(final_size as usize, size_of::<RawAcid>() + size_of::<RawAcidFsAccessControl>(), "Serialized FAC has wrong size");
+    assert_eq!(final_size as usize, size_of::<Acid>() + size_of::<AcidFsAccessControl>(), "Serialized FAC has wrong size");
     bincode::DefaultOptions::new().with_fixint_encoding().allow_trailing_bytes().with_no_limit().with_little_endian().serialize_into(&mut writer, &acid_fac)?;
 
     for elem in accessed_services {
         if elem.len() & !7 != 0 || elem.len() == 0 {
-            return Err(Error::InvalidNpdmValue{
+            return Err(Error::InvalidNpdmValue {
                 error: format!("accessed_services.{}", elem).into(),
                 backtrace: Backtrace::generate()
             });
@@ -694,7 +694,7 @@ fn write_acid<T: Write>(mut writer: &mut T, npdm: &NpdmInput, meta: &RawMeta, ac
 
     for elem in hosted_services {
         if elem.len() & !7 != 0 || elem.len() == 0 {
-            return Err(Error::InvalidNpdmValue{
+            return Err(Error::InvalidNpdmValue {
                 error: format!("hosted_services.{}", elem).into(),
                 backtrace: Backtrace::generate()
             });
@@ -705,7 +705,7 @@ fn write_acid<T: Write>(mut writer: &mut T, npdm: &NpdmInput, meta: &RawMeta, ac
         writer.write_all(elem.as_bytes())?;
     }
 
-    assert_eq!(final_size as usize, size_of::<RawAcid>() + size_of::<RawAcidFsAccessControl>()
+    assert_eq!(final_size as usize, size_of::<Acid>() + size_of::<AcidFsAccessControl>()
         + sac_encoded_len(accessed_services) + sac_encoded_len(hosted_services), "Serialized SAC has wrong size");
 
     for elem in kern_caps {
@@ -714,117 +714,9 @@ fn write_acid<T: Write>(mut writer: &mut T, npdm: &NpdmInput, meta: &RawMeta, ac
         writer.write_all(&encoded)?;
     }
 
-    assert_eq!(final_size as usize, size_of::<RawAcid>() + size_of::<RawAcidFsAccessControl>()
+    assert_eq!(final_size as usize, size_of::<Acid>() + size_of::<AcidFsAccessControl>()
         + sac_encoded_len(accessed_services) + sac_encoded_len(hosted_services)
         + kern_caps.iter().map(|v| v.encode().unwrap().len() * 4).sum::<usize>(), "Serialized KAC has wrong size");
 
     Ok(())
-}
-
-#[repr(C)]
-#[derive(Default, Clone, Copy, Serialize)]
-struct RawAciFsAccessControl {
-    version: u8,
-    padding: [u8; 3],
-    fs_access_flags_bitmask: [u8; 8], // Work around broken alignment. It sucks.
-    content_owner_info_offset: u32, // Always 0x1C
-    content_owner_info_size: u32,
-    save_data_owner_info_offset: u32,
-    save_data_owner_info_size: u32,
-    // TODO: more variable stuff afterwards
-}
-
-#[repr(C, packed)]
-#[derive(Default, Clone, Copy, Serialize)]
-struct RawAcidFsAccessControl {
-    version: u8,
-    content_owner_id_count: u8, // 5.0.0+
-    save_data_owner_id_count: u8, // 5.0.0+
-    padding: u8,
-    fs_access_flags_bitmask: [u8; 8], // Work around broken alignment. It sucks.
-    content_owner_id_min: u64,
-    content_owner_id_max: u64,
-    save_data_owner_id_min: u64,
-    save_data_owner_id_max: u64,
-    // TODO: more variable stuff afterwards
-}
-
-#[repr(C)]
-#[derive(Default, Clone, Copy, Serialize)]
-struct RawMeta {
-    magic: [u8; 4],
-    signature_key_generation: u32, // 9.0.0+
-    #[doc(hidden)]
-    reserved8: u32,
-    flags: u8,
-    #[doc(hidden)]
-    reserved13: u8,
-    main_thread_priority: u8,
-    main_thread_core_number: u8,
-    #[doc(hidden)]
-    reserved16: u32,
-    system_resource_size: u32,
-    version: u32,
-    main_thread_stack_size: u32,
-    name: [u8; 16],
-    product_code: [u8; 16],
-    #[doc(hidden)]
-    reserved64: Reserved64,
-    aci_offset: u32,
-    aci_size: u32,
-    acid_offset: u32,
-    acid_size: u32,
-}
-
-/// Restriced Access Controls, signed by Nintendo.
-#[repr(C)]
-#[derive(Default, Clone, Copy, Serialize)]
-struct RawAcid {
-    // RSA-2048 Signature starting from `rsa_nca_pubkey` and spanning
-    // `signed_size` bytes, using a fixed key owned by Nintendo. The pubkey
-    // part can be found in hactool, `acid_fixed_key_modulus`.
-    //
-    // Written separately.
-    // rsa_acid_sig: SigOrPubKey, // [u8; 0x100],
-    /// RSA-2048 public key for the second NCA signature
-    rsa_nca_pubkey: SigOrPubKey, // [u8; 0x100],
-    /// Magic identifying a valid ACID. Should be `b"ACID"`.
-    magic: [u8; 4],
-    signed_size: u32,
-    #[doc(hidden)]
-    reserved: u32,
-    flags: u32,
-    program_id_range_min: u64,
-    program_id_range_max: u64,
-    fs_access_control_offset: u32,
-    fs_access_control_size: u32,
-    service_access_control_offset: u32,
-    service_access_control_size: u32,
-    kernel_access_control_offset: u32,
-    kernel_access_control_size: u32,
-    #[doc(hidden)]
-    reserved38: u64
-}
-
-/// Access Control Information.
-///
-/// Protected by the NCA signature, which devs control via their pubkey.
-#[repr(C)]
-#[derive(Default, Clone, Copy, Serialize)]
-struct RawAci {
-    /// Magic identifying a valid ACI. Should be `ACI0`.
-    magic: [u8; 4],
-    #[doc(hidden)]
-    reserved4: [u8; 0xC],
-    program_id: u64,
-    #[doc(hidden)]
-    reserved24: u64,
-    fs_access_control_offset: u32,
-    fs_access_control_size: u32,
-    service_access_control_offset: u32,
-    service_access_control_size: u32,
-    kernel_access_control_offset: u32,
-    kernel_access_control_size: u32,
-    #[doc(hidden)]
-    reserved38: u64
 }

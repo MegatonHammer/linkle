@@ -1,5 +1,5 @@
 use crate::format::utils::HexOrNum;
-use crate::format::{nacp::NacpInput, npdm::KernelCapability, romfs::RomFs, utils};
+use crate::format::{nacp::Nacp, npdm::KernelCapability, romfs::RomFs, utils};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use elf::types::{Machine, ProgramHeader, SectionHeader, EM_AARCH64, EM_ARM, PT_LOAD, SHT_NOTE};
 use serde_derive::{Deserialize, Serialize};
@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process;
 
 // TODO: Support switchbrew's embedded files for NRO
-pub struct NxoFile {
+pub struct Nxo {
     file: File,
     machine: Machine,
     text_segment: ProgramHeader,
@@ -83,7 +83,7 @@ where
 }
 
 fn write_mod0<T>(
-    nxo_file: &NxoFile,
+    nxo_file: &Nxo,
     offset: u32,
     output_writter: &mut T,
     bss_addr: u32,
@@ -125,7 +125,7 @@ where
     Ok(())
 }
 
-impl NxoFile {
+impl Nxo {
     pub fn from_elf(input: &str) -> std::io::Result<Self> {
         let path = PathBuf::from(input);
         let mut file = File::open(path)?;
@@ -192,7 +192,7 @@ impl NxoFile {
             }
         }
 
-        Ok(NxoFile {
+        Ok(Nxo {
             file,
             machine: elf_file.ehdr.machine,
             text_segment: *text_segment,
@@ -212,7 +212,7 @@ impl NxoFile {
         output_writter: &mut T,
         romfs: Option<RomFs>,
         icon: Option<&str>,
-        nacp: Option<NacpInput>,
+        nacp: Option<Nacp>,
     ) -> std::io::Result<()>
     where
         T: Write,

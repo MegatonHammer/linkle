@@ -177,6 +177,7 @@ impl<T> OptionExt for Option<T> {
 }
 
 #[derive(Default, Debug)]
+#[allow(dead_code)]
 pub struct Keys {
     secure_boot_key: Option<Aes128Key>,
     tsec_key: Option<Aes128Key>,

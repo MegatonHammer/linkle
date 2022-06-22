@@ -74,7 +74,7 @@ enum Opt {
         /// Sets the output file to use.
         output_file: String,
     },
-    /// Create a RomFS file from a directory.
+    /// Create a RomFs file from a directory.
     #[structopt(name = "romfs")]
     Romfs {
         /// Sets the input directory to use.
@@ -95,7 +95,7 @@ enum Opt {
         #[structopt(parse(from_os_str), short = "k", long = "keyset")]
         keyfile: Option<PathBuf>,
     },
-    /// Create an NPDM from a JSON-NPDM formatted file.
+    /// Create a NPDM from a JSON-NPDM formatted file.
     #[structopt(name = "npdm")]
     Npdm {
         /// Sets the input JSON file to use.
@@ -133,7 +133,7 @@ fn create_nxo(
     };
     let nacp_input = if let Some(nacp_path) = nacp_input {
         Some(
-            linkle::format::nacp::NacpInput::from_json(&nacp_path)
+            linkle::format::nacp::Nacp::from_json(&nacp_path)
                 .map_err(|err| (err, &nacp_path))?,
         )
     } else {
@@ -141,7 +141,7 @@ fn create_nxo(
     };
 
     let mut nxo =
-        linkle::format::nxo::NxoFile::from_elf(&input_file).map_err(|err| (err, &input_file))?;
+        linkle::format::nxo::Nxo::from_elf(&input_file).map_err(|err| (err, &input_file))?;
     let mut option = OpenOptions::new();
     let output_option = option.write(true).create(true).truncate(true);
     match format {
@@ -170,7 +170,7 @@ fn create_kip(
     output_file: &str,
 ) -> Result<(), linkle::error::Error> {
     let mut nxo =
-        linkle::format::nxo::NxoFile::from_elf(&input_file).map_err(|err| (err, &input_file))?;
+        linkle::format::nxo::Nxo::from_elf(&input_file).map_err(|err| (err, &input_file))?;
     let npdm = serde_json::from_reader(File::open(npdm_file).map_err(|err| (err, npdm_file))?)?;
 
     let mut option = OpenOptions::new();
@@ -222,7 +222,7 @@ fn extract_pfs0(input_path: &str, output_directory: &str) -> Result<(), linkle::
 }
 
 fn create_nacp(input_file: &str, output_file: &str) -> Result<(), linkle::error::Error> {
-    let mut nacp = linkle::format::nacp::NacpInput::from_json(&input_file)?;
+    let mut nacp = linkle::format::nacp::Nacp::from_json(&input_file)?;
     let mut option = OpenOptions::new();
     let output_option = option.write(true).create(true).truncate(true);
     let mut out_file = output_option
@@ -264,9 +264,9 @@ fn print_keys(
 }
 
 fn create_npdm(input_file: &Path, input_acid: Option<&Path>, sign_acid: Option<&Path>, output_file: &Path) -> Result<(), linkle::error::Error> {
-    use linkle::format::npdm::{NpdmInput, AcidBehavior};
+    use linkle::format::npdm::{Npdm, AcidBehavior};
 
-    let npdm = NpdmInput::from_json(&input_file)?;
+    let npdm = Npdm::from_json(&input_file)?;
     let mut option = OpenOptions::new();
     let output_option = option.write(true).create(true).truncate(true);
     let mut out_file = output_option.open(output_file).map_err(|err| (err, output_file))?;

@@ -492,13 +492,13 @@ impl RomFs {
             cur_ofs = new_cur_ofs;
 
             println!(
-                "Writing {} to RomFS image...",
+                "Writing {} to RomFs image...",
                 file.borrow().system_path.to_string_lossy()
             );
             assert_eq!(file.borrow().offset, cur_ofs - 0x200, "Wrong offset");
 
             let len = io::copy(&mut File::open(&file.borrow().system_path)?, to)?;
-            assert_eq!(len, file.borrow().size, "File changed while building romfs");
+            assert_eq!(len, file.borrow().size, "File changed while building RomFs");
             cur_ofs += file.borrow().size;
         }
 
