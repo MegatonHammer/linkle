@@ -1,4 +1,4 @@
-use crate::format::utils;
+use crate::format::utils::{HexOrNum, check_string_or_truncate};
 use byteorder::{LittleEndian, WriteBytesExt};
 use serde_derive::{Deserialize, Serialize};
 use std::fs::File;
@@ -6,8 +6,6 @@ use std::io::Write;
 
 mod fmt;
 use fmt::*;
-
-use super::utils::HexOrNum;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ApplicationTitle {
@@ -144,8 +142,8 @@ impl Nacp {
             .unwrap_or_else(|| "Unknown author".to_string());
 
         // Truncate default names if needed
-        utils::check_string_or_truncate(&mut def_name, "default_name", 0x200);
-        utils::check_string_or_truncate(&mut def_author, "default_author", 0x100);
+        check_string_or_truncate(&mut def_name, "default_name", 0x200);
+        check_string_or_truncate(&mut def_author, "default_author", 0x100);
 
         let application_id = self.application_id.map(|h| h.0).unwrap_or(0);
         let presence_group_id = self.presence_group_id.map(|h| h.0).unwrap_or(application_id);
@@ -281,7 +279,7 @@ impl Nacp {
         let isbn_max_len = 0x25usize;
         let mut isbn_pad = isbn_max_len;
         if let Some(mut isbn) = self.isbn.as_mut() {
-            utils::check_string_or_truncate(&mut isbn, "isbn", isbn_max_len);
+            check_string_or_truncate(&mut isbn, "isbn", isbn_max_len);
             isbn_pad = isbn_max_len - version.len();
             out_writer.write_all(version.as_bytes())?;
         }
@@ -331,7 +329,7 @@ impl Nacp {
 
         // 0x3060: u8 display_version[0x10]
         let display_version_max_len = 0x10usize;
-        utils::check_string_or_truncate(&mut version, "version", display_version_max_len);
+        check_string_or_truncate(&mut version, "version", display_version_max_len);
         let display_version_pad = display_version_max_len - version.len();
         out_writer.write_all(version.as_bytes())?;
         out_writer.write_all(&vec![0; display_version_pad])?;
@@ -396,7 +394,7 @@ impl Nacp {
         let bcat_passphrase_max_len = 0x41usize;
         let mut bcat_passphrase_pad = bcat_passphrase_max_len;
         if let Some(mut bcat_passphrase) = self.bcat_passphrase.as_mut() {
-            utils::check_string_or_truncate(&mut bcat_passphrase, "bcat_passphrase", bcat_passphrase_max_len);
+            check_string_or_truncate(&mut bcat_passphrase, "bcat_passphrase", bcat_passphrase_max_len);
             bcat_passphrase_pad = bcat_passphrase_max_len - version.len();
             out_writer.write_all(bcat_passphrase.as_bytes())?;
         }
