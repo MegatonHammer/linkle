@@ -7,6 +7,8 @@ use std::io::Write;
 mod fmt;
 use fmt::*;
 
+use super::utils::HexOrNum;
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ApplicationTitle {
     pub name: String,
@@ -72,10 +74,10 @@ pub struct Nacp {
     pub default_author: Option<String>,
     pub version: String,
     #[serde(alias = "title_id")]
-    pub application_id: Option<String>,
-    pub presence_group_id: Option<String>,
+    pub application_id: Option<HexOrNum>,
+    pub presence_group_id: Option<HexOrNum>,
     #[serde(alias = "dlc_base_title_id")]
-    pub add_on_content_base_id: Option<String>,
+    pub add_on_content_base_id: Option<HexOrNum>,
     #[serde(alias = "lang")]
     pub titles: Option<ApplicationTitles>,
     pub isbn: Option<String>,
@@ -87,8 +89,8 @@ pub struct Nacp {
     pub logo_handling: Option<LogoHandling>,
     pub crash_report: Option<CrashReport>,
     pub bcat_passphrase: Option<String>,
-    pub program_index: Option<u8>,
-    pub save_data_owner_id: Option<String>,
+    pub program_index: Option<HexOrNum>,
+    pub save_data_owner_id: Option<HexOrNum>,
     // TODO: support more NACP fields
 }
 
@@ -141,39 +143,16 @@ impl Nacp {
             .clone()
             .unwrap_or_else(|| "Unknown author".to_string());
 
-        let application_id = match &self.application_id {
-            None => 0,
-            Some(id_str) => {
-                u64::from_str_radix(id_str.as_str(), 16).expect("Invalid application_id provided!")
-            }
-        };
-        
-        let presence_group_id = match &self.presence_group_id {
-            None => application_id,
-            Some(id_str) => {
-                u64::from_str_radix(id_str.as_str(), 16).expect("Invalid presence_group_id provided!")
-            }
-        };
-
-        let add_on_content_base_id = match &self.add_on_content_base_id {
-            None => application_id + 0x1000,
-            Some(id_str) => {
-                u64::from_str_radix(id_str.as_str(), 16).expect("Invalid presence_group_id provided!")
-            }
-        };
-
-        let save_data_owner_id = match &self.save_data_owner_id {
-            None => application_id,
-            Some(id_str) => {
-                u64::from_str_radix(id_str.as_str(), 16).expect("Invalid save_data_owner_id provided!")
-            }
-        };
-
         // Truncate default names if needed
         utils::check_string_or_truncate(&mut def_name, "default_name", 0x200);
         utils::check_string_or_truncate(&mut def_author, "default_author", 0x100);
 
-        // fallback entry if titles entry isn't defined
+        let application_id = self.application_id.map(|h| h.0).unwrap_or(0);
+        let presence_group_id = self.presence_group_id.map(|h| h.0).unwrap_or(application_id);
+        let add_on_content_base_id = self.add_on_content_base_id.map(|h| h.0).unwrap_or(application_id + 0x1000);
+        let save_data_owner_id = self.save_data_owner_id.map(|h| h.0).unwrap_or(application_id);
+
+        // Fallback default entry for each entry that wasn't provided
         let default_title = ApplicationTitle { name: def_name, author: def_author };
         match &self.titles {
             None => {
@@ -477,7 +456,7 @@ impl Nacp {
         out_writer.write_u8(0)?;
 
         // 0x3212: u8 program_index
-        let program_index = self.program_index.unwrap_or(0);
+        let program_index = self.program_index.map(|h| h.0 as u8).unwrap_or(0);
         out_writer.write_u8(program_index)?;
 
         // 0x3213: u8 required_network_service_license_on_launch?
