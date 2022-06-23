@@ -1,9 +1,8 @@
-//! Straight from SunriseOS' libkern
 use serde_derive::{Serialize, Deserialize};
 
-#[repr(u32)]
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
-pub enum SyscallNames {
+#[repr(u32)]
+pub enum SystemCallId {
     SetHeapSize = 0x01,
     SetMemoryPermission = 0x02,
     SetMemoryAttribute = 0x03,
@@ -49,7 +48,7 @@ pub enum SyscallNames {
     FlushDataCache = 0x2B,
     MapPhysicalMemory = 0x2C,
     UnmapPhysicalMemory = 0x2D,
-    GetFutureThreadInfo = 0x2E,
+    GetDebugFutureThreadInfo = 0x2E, // GetFutureThreadInfo before 6.0.0
     GetLastThreadInfo = 0x2F,
     GetResourceLimitLimitValue = 0x30,
     GetResourceLimitCurrentValue = 0x31,
@@ -57,14 +56,20 @@ pub enum SyscallNames {
     GetThreadContext3 = 0x33,
     WaitForAddress = 0x34,
     SignalToAddress = 0x35,
-    DumpInfo = 0x3C,
-    DumpInfoNew = 0x3D,
+    SynchronizePreemptionState = 0x36,
+    GetResourceLimitPeakValue = 0x37,
+    CreateIoPool = 0x39,
+    CreateIoRegion = 0x3A,
+    KernelDebug = 0x3C, // DumpInfo before 4.0.0
+    ChangeKernelTraceState = 0x3D,
     CreateSession = 0x40,
     AcceptSession = 0x41,
     ReplyAndReceiveLight = 0x42,
     ReplyAndReceive = 0x43,
     ReplyAndReceiveWithUserBuffer = 0x44,
     CreateEvent = 0x45,
+    MapIoRegion = 0x46,
+    UnmapIoRegion = 0x47,
     MapPhysicalMemoryUnsafe = 0x48,
     UnmapPhysicalMemoryUnsafe = 0x49,
     SetUnsafeLimit = 0x4A,
@@ -119,11 +124,5 @@ pub enum SyscallNames {
     GetProcessInfo = 0x7C,
     CreateResourceLimit = 0x7D,
     SetResourceLimitLimitValue = 0x7E,
-    CallSecureMonitor = 0x7F,
-
-    // Sunrise extensions
-    MapFramebuffer = 0x80,
-    StartProcessEntrypoint = 0x81,
-    MapMmioRegion = 0x82,
-    SetThreadArea = 0x83,
+    CallSecureMonitor = 0x7F
 }

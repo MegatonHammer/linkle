@@ -1,54 +1,105 @@
+use block_modes::BlockModeError;
+use snafu::Backtrace;
+use snafu::GenerateBacktrace;
+use snafu::Snafu;
 use std::io;
+use std::borrow::Cow;
+use std::path::{Path, PathBuf};
 use std::str::Utf8Error;
 use std::string::FromUtf8Error;
-use std::path::{Path, PathBuf};
-use ini;
-use failure::Backtrace;
-use block_modes::BlockModeError;
-use failure::Fail;
-use derive_more::Display;
-use std::borrow::Cow;
 
-#[derive(Debug, Fail, Display)]
+#[derive(Debug, Snafu)]
 pub enum Error {
-    #[display(fmt = "Failed to deserialize: {}", _0)]
-    Deserialization(#[cause] serde_json::error::Error),
-    #[display(fmt = "{}: {}", "_1.display()", _0)]
-    Io(#[cause] io::Error, PathBuf, Backtrace),
-    #[display(fmt = "Internal IO Error (please submit a bug report with the backtrace): {}", _0)]
-    IoInternal(#[cause] io::Error, Backtrace),
-    #[display(fmt = "Decryption failed")]
-    BlockMode(BlockModeError, Backtrace),
-    #[display(fmt = "Error parsing the INI file: {}", _0)]
-    Ini(#[cause] ini::ini::Error, Backtrace),
-    #[display(fmt = "Key derivation error: {}", _0)]
-    Crypto(String, Backtrace),
-    #[display(fmt = "Invalid keyblob {}: {}.", _1, _0)]
-    MacError(cmac::crypto_mac::MacError, usize, Backtrace),
-    #[display(fmt = "Invalid PFS0: {}.", _0)]
-    InvalidPfs0(&'static str, Backtrace),
-    #[display(fmt = "Failed to convert filename to UTF8: {}.", _0)]
-    Utf8Conversion(String, #[cause] Utf8Error, Backtrace),
-    #[display(fmt = "Can't handles symlinks in romfs: {}", "_0.display()")]
-    RomFsSymlink(PathBuf, Backtrace),
-    #[display(fmt = "Unknown file type at {}", "_0.display()")]
-    RomFsFiletype(PathBuf, Backtrace),
-    #[display(fmt = "Invalid NPDM value for field {}", "_0")]
-    InvalidNpdmValue(Cow<'static, str>, Backtrace),
-    #[display(fmt = "Failed to serialize NPDM.")]
-    BincodeError(#[cause] Box<bincode::ErrorKind>, Backtrace),
-    #[display(fmt = "Failed to sign NPDM.")]
-    RsaError(#[cause] rsa::errors::Error, Backtrace),
-    #[display(fmt = "Failed to sign NPDM, invalid PEM.")]
-    PemError(#[cause] pem::PemError, Backtrace),
-    #[display(fmt = "Failed to sign NPDM, invalid PEM.")]
-    Asn1Error(#[cause] yasna::ASN1Error, Backtrace),
+    #[snafu(display("Failed to deserialize: {}", error))]
+    Deserialization { error: serde_json::error::Error },
+    #[snafu(display( "{}: {}", path.display(), error))]
+    Io {
+        error: io::Error,
+        path: PathBuf,
+        backtrace: Backtrace,
+    },
+    #[snafu(display(
+        "Internal IO Error (please submit a bug report with the backtrace): {}",
+        error
+    ))]
+    IoInternal {
+        error: io::Error,
+        backtrace: Backtrace,
+    },
+    #[snafu(display("Decryption failed"))]
+    BlockMode {
+        error: BlockModeError,
+        backtrace: Backtrace,
+    },
+    #[snafu(display("Error parsing the INI file: {}", error))]
+    Ini {
+        error: ini::Error,
+        backtrace: Backtrace,
+    },
+    #[snafu(display("Key derivation error: {}", error))]
+    Crypto { error: String, backtrace: Backtrace },
+    #[snafu(display("Invalid keyblob {}: {}.", id, error))]
+    MacError {
+        error: cmac::crypto_mac::MacError,
+        id: usize,
+        backtrace: Backtrace,
+    },
+    #[snafu(display("Invalid PFS0: {}.", error))]
+    InvalidPfs0 {
+        error: &'static str,
+        backtrace: Backtrace,
+    },
+    #[snafu(display("Failed to convert filename to UTF8: {}.", filename))]
+    Utf8Conversion {
+        filename: String,
+        error: Utf8Error,
+        backtrace: Backtrace,
+    },
+    #[snafu(display("Can't handles symlinks in romfs: {}", error.display()))]
+    RomFsSymlink {
+        error: PathBuf,
+        backtrace: Backtrace,
+    },
+    #[snafu(display("Unknown file type at {}", error.display()))]
+    RomFsFiletype {
+        error: PathBuf,
+        backtrace: Backtrace,
+    },
+    #[snafu(display("Invalid NPDM value for field {}", "_0"))]
+    InvalidNpdmValue {
+        error: Cow<'static, str>,
+        backtrace: Backtrace,
+    },
+    #[snafu(display("Failed to serialize NPDM."))]
+    BincodeError {
+        error: Box<bincode::ErrorKind>,
+        backtrace: Backtrace
+    },
+    #[snafu(display("Failed to sign NPDM."))]
+    RsaError {
+        error: rsa::errors::Error,
+        backtrace: Backtrace
+    },
+    #[snafu(display("Failed to sign NPDM, invalid PEM."))]
+    PemError {
+        error: pem::PemError,
+        backtrace: Backtrace
+    },
+    #[snafu(display("Failed to sign NPDM, invalid PEM."))]
+    Asn1Error {
+        error: yasna::ASN1Error,
+        backtrace: Backtrace
+    },
 }
 
 impl Error {
     fn with_path<T: AsRef<Path>>(self, path: T) -> Error {
-        if let Error::IoInternal(err, backtrace) = self {
-            Error::Io(err, path.as_ref().to_owned(), backtrace)
+        if let Error::IoInternal { error, backtrace } = self {
+            Error::Io {
+                error,
+                path: path.as_ref().to_owned(),
+                backtrace,
+            }
         } else {
             self
         }
@@ -67,67 +118,100 @@ impl<T> ResultExt for Result<T, Error> {
 
 impl From<io::Error> for Error {
     fn from(err: io::Error) -> Error {
-        Error::IoInternal(err, Backtrace::new())
+        Error::IoInternal {
+            error: err,
+            backtrace: Backtrace::generate(),
+        }
     }
 }
 
 impl<T: AsRef<Path>> From<(io::Error, T)> for Error {
-    fn from((err, path): (io::Error, T)) -> Error {
-        Error::Io(err, path.as_ref().to_owned(), Backtrace::new())
+    fn from((error, path): (io::Error, T)) -> Error {
+        Error::Io {
+            error,
+            path: path.as_ref().to_owned(),
+            backtrace: Backtrace::generate(),
+        }
     }
 }
 
-impl From<ini::ini::Error> for Error {
-    fn from(err: ini::ini::Error) -> Error {
-        Error::Ini(err, Backtrace::new())
+impl From<ini::Error> for Error {
+    fn from(error: ini::Error) -> Error {
+        Error::Ini {
+            error,
+            backtrace: Backtrace::generate(),
+        }
     }
 }
 
 impl From<BlockModeError> for Error {
-    fn from(err: BlockModeError) -> Error {
-        Error::BlockMode(err, Backtrace::new())
+    fn from(error: BlockModeError) -> Error {
+        Error::BlockMode {
+            error,
+            backtrace: Backtrace::generate(),
+        }
     }
 }
 
 impl From<serde_json::error::Error> for Error {
-    fn from(err: serde_json::error::Error) -> Error {
-        Error::Deserialization(err)
+    fn from(error: serde_json::error::Error) -> Error {
+        Error::Deserialization { error }
     }
 }
 
 impl From<FromUtf8Error> for Error {
-    fn from(err: FromUtf8Error) -> Error {
+    fn from(error: FromUtf8Error) -> Error {
         // Why the heck does OsStr not have display()?
-        Error::Utf8Conversion(String::from_utf8_lossy(err.as_bytes()).into_owned(), err.utf8_error(), Backtrace::new())
+        Error::Utf8Conversion {
+            filename: String::from_utf8_lossy(error.as_bytes()).into_owned(),
+            error: error.utf8_error(),
+            backtrace: Backtrace::generate(),
+        }
     }
 }
 
 impl From<(usize, cmac::crypto_mac::MacError)> for Error {
-    fn from((id, err): (usize, cmac::crypto_mac::MacError)) -> Error {
-        Error::MacError(err, id, Backtrace::new())
+    fn from((id, error): (usize, cmac::crypto_mac::MacError)) -> Error {
+        Error::MacError {
+            error,
+            id,
+            backtrace: Backtrace::generate(),
+        }
     }
 }
 
 impl From<Box<bincode::ErrorKind>> for Error {
     fn from(err: Box<bincode::ErrorKind>) -> Error {
-        Error::BincodeError(err, Backtrace::new())
+        Error::BincodeError {
+            error: err,
+            backtrace: Backtrace::generate()
+        }
     }
 }
 
 impl From<rsa::errors::Error> for Error {
     fn from(err: rsa::errors::Error) -> Error {
-        Error::RsaError(err, Backtrace::new())
+        Error::RsaError {
+            error: err,
+            backtrace: Backtrace::generate()
+        }
     }
 }
 
 impl From<pem::PemError> for Error {
     fn from(err: pem::PemError) -> Error {
-        Error::PemError(err, Backtrace::new())
+        Error::PemError {
+            error: err,
+            backtrace: Backtrace::generate()
+        }
     }
 }
 
 impl From<yasna::ASN1Error> for Error {
     fn from(err: yasna::ASN1Error) -> Error {
-        Error::Asn1Error(err, Backtrace::new())
+        Error::Asn1Error {
+            error: err,
+            backtrace: Backtrace::generate()
+        }
     }
 }

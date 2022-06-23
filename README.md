@@ -2,12 +2,15 @@
 [![Apache 2 license](https://img.shields.io/badge/license-Apache-blue.svg)](https://raw.githubusercontent.com/MegatonHammer/linkle/master/LICENSE-APACHE)
 [![Discord](https://img.shields.io/discord/439418034130780182.svg)]( https://discord.gg/MZJbNZY)
 
-# Introduction
+# linkle
 
 This program permits to convert or create various formats used on the Nintendo Switch.
-For now, it only supports the creation of PFS0/NSP and 64 bits NRO/NSO. It can also
+
+It can also
 be used with cargo through `cargo nro` to simplify the build process of Megaton-Hammer
 homebrew.
+
+Supported formats: PFS0/NSP, NSO, NRO, NPDM, NACP, RomFs
 
 # Installation
 
@@ -30,7 +33,11 @@ Creating a PFS0/NSP file:
 
 Creating a NACP file:
 
-    linkle ncap input.json output.nacp
+    linkle nacp input.json output.nacp
+
+Creating a NPDM file:
+
+    linkle npdm input.json output.npdm
 
 Creating a RomFs file:
 
@@ -45,7 +52,7 @@ Compiling and creating an NRO file (requires xargo from https://github.com/robla
 When compiling a project with `cargo nro`, a special `[package.metadata.linkle.BINARY_NAME]` key is
 used to allow customizing the build. This is an example Cargo.toml:
 
-```
+```toml
 [package]
 name = "link"
 version = "0.1.0"
@@ -57,9 +64,10 @@ icon = "icon.jpeg"
 titleid = "0100000000819"
 
 [package.metadata.linkle.megaton-example.nacp]
-name = "Link"
+default_name = "Link"
+default_author = "Linkle"
 
-[package.metadata.linkle.megaton-example.nacp.lang.ja]
+[package.metadata.linkle.megaton-example.nacp.titles.ja]
 "name": "リンク",
 "author": "リンクル"
 ```
@@ -76,20 +84,25 @@ Every field has a sane default:
 
 The `[package.metadata.linkle.BINARY_NAME.nacp]` key follows the [NACP input format](#nacp-input-format)
 
-# NACP input format
+# NACP input format (JSON)
 
 This is an example of a compatible JSON:
 
 ```json
 {
-    "name": "Link",
-    "author": "Linkle",
+    "default_name": "Link",
+    "default_author": "Linkle",
     "version": "1.0.0",
-    "title_id": "0400000000020000",
-    "lang": {
+    "application_id": "0100AAAABBBBCCCC",
+    "startup_user_account": "Required",
+    "titles": {
         "ja": {
             "name": "リンク",
             "author": "リンクル"
+        },
+        "Spanish": {
+            "name": "Link (es)",
+            "author": "Linkle (es)"
         }
     }
 }
@@ -97,31 +110,48 @@ This is an example of a compatible JSON:
 
 ## Fields
 
-NOTE: Every fields are optional
+| Field                  | Value                                                            | Description                                               | Default value           |
+|------------------------|------------------------------------------------------------------|-----------------------------------------------------------|-------------------------|
+| default_name           | String (max size 0x200)                                          | Default title name                                        | Unknown application     |
+| default_author         | String (max size 0x100)                                          | Default application author                                | Unknown author          |
+| version                | String (max size 0x10)                                           | Application version                                       | <required field>        |
+| application_id         | Hex-String u64                                                   | Application ID                                            | 0000000000000000        |
+| add_on_content_base_id | Hex-String u64                                                   | Base ID for add-on content (DLC)                          | application_id + 0x1000 |
+| titles                 | Object of language titles                                        | Language-specific application name/author values          | Default values above    |
+| presence_group_id      | Hex-String u64                                                   | Presence group ID                                         | application_id          |
+| save_data_owner_id     | Hex-String u64                                                   | Save-data owner ID                                        | application_id          |
+| isbn                   | String (max size 0x25)                                           | ISBN                                                      | Empty string            |
+| startup_user_account   | "None", "Required", "RequiredWithNetworkServiceAccountAvailable" | Whether the application requires a user account on launch | "None"                  |
+| attribute              | "None", "Demo", "RetailInteractiveDisplay"                       | Application attribute                                     | "None"                  |
+| screenshot             | "Allow", "Deny"                                                  | Screenshot control                                        | "Allow"                 |
+| video_capture          | "Disabled", "Enabled", "Automatic"                               | Video capture control                                     | "Disabled"              |
+| logo_type              | "LicensedByNintendo", "Nintendo"                                 | Logo type                                                 | "LicensedByNintendo"    |
+| logo_handling          | "Auto", "Manual"                                                 | Logo handling                                             | "Auto"                  |
+| crash_report           | "Deny", "Allow"                                                  | Crash report control                                      | "Allow"                 |
+| bcat_passphrase        | String (max size 0x41)                                           | BCAT passphrase                                           | Empty string            |
+| program_index          | u8                                                               | Program index                                             | 0                       |
 
-| Field             | Description                                      | Default value       |
-| ----------------- |:------------------------------------------------:| -------------------:|
-| name              | The application name.                            | Unknown Application |
-| author            | The application author.                          | Unknown Author      |
-| version           | The application version.                         | 1.0.0               |
-| title_id          | The application title id.                        | 0000000000000000    |
-| dlc_base_title_id | The base id of all the title DLC.                | title_id + 0x1000   |
-| lang (object)     | Different name/author depending of the language  | use name and author |
+Note: default name/author and application ID are not actual NACP fields, but they are used as the default value for various fields, as the table shows.
 
-| Supported Languages|
-|:------------------:|
-| en-US              |
-| en-UK              |
-| ja                 |
-| fr                 |
-| de                 |
-| es-419             |
-| es                 |
-| it                 |
-| nl                 |
-| fr-CA              |
-| pt                 |
-| ru                 |
-| ko                 |
-| zh-TW              |
-| zh-CN              |
+### Available languages
+
+| Language names       | Language codes |
+|----------------------|----------------|
+| AmericanEnglish      | en-US          |
+| BritishEnglish       | en-UK          |
+| Japanese             | ja             |
+| French               | fr             |
+| German               | de             |
+| LatinAmericanSpanish | es-419         |
+| Spanish              | es             |
+| Italian              | it             |
+| Dutch                | nl             |
+| CanadianFrench       | fr-CA          |
+| Portuguese           | pt             |
+| Russian              | ru             |
+| Korean               | ko             |
+| TraditionalChinese   | zh-TW          |
+| SimplifiedChinese    | zh-CN          |
+| BrazilianPortuguese  | pt-BR          |
+
+Note: languages in the titles object can be specified by their names or their codes, as the JSON example above shows.
