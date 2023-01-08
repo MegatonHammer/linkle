@@ -1,11 +1,10 @@
 use crate::error::Error;
-use aes::cipher::generic_array::GenericArray;
-use aes::cipher::{BlockCipher, SyncStreamCipher};
 use aes::Aes128;
-use aes::NewBlockCipher;
-use cmac::{Cmac, Mac, NewMac};
-use ctr::cipher::stream::NewStreamCipher;
-use ctr::Ctr128;
+use cipher::{
+    generic_array::GenericArray, BlockDecrypt, BlockEncrypt, KeyInit, KeyIvInit, StreamCipher,
+};
+use cmac::{Cmac, Mac};
+use ctr::Ctr128BE;
 use ini::{self, Properties};
 use snafu::{Backtrace, GenerateImplicitData};
 use std::fmt;
@@ -56,13 +55,13 @@ impl Keyblob {
         let mut encrypted_keyblob = [0; 0xB0];
         encrypted_keyblob[0x20..].copy_from_slice(&self.0);
 
-        let mut crypter = Ctr128::<Aes128>::new(
+        let mut crypter = <Ctr128BE<Aes128> as KeyIvInit>::new(
             GenericArray::from_slice(&key.0),
             GenericArray::from_slice(&encrypted_keyblob[0x10..0x20]),
         );
         crypter.apply_keystream(&mut encrypted_keyblob[0x20..]);
 
-        let mut cmac = Cmac::<Aes128>::new_varkey(&mac_key.0[..]).unwrap();
+        let mut cmac = <Cmac<Aes128> as KeyInit>::new_from_slice(&mac_key.0[..]).unwrap();
         cmac.update(&encrypted_keyblob[0x10..]);
         encrypted_keyblob[..0x10].copy_from_slice(cmac.finalize().into_bytes().as_slice());
         Ok(EncryptedKeyblob(encrypted_keyblob))
@@ -79,12 +78,12 @@ impl EncryptedKeyblob {
         let mut keyblob = [0; 0x90];
         keyblob.copy_from_slice(&self.0[0x20..]);
 
-        let mut cmac = Cmac::<Aes128>::new_varkey(&mac_key.0[..]).unwrap();
+        let mut cmac = <Cmac<Aes128> as KeyInit>::new_from_slice(&mac_key.0[..]).unwrap();
         cmac.update(&self.0[0x10..]);
-        cmac.verify(&self.0[..0x10])
+        cmac.verify(GenericArray::from_slice(&self.0[..0x10]))
             .map_err(|err| (keyblob_id, err))?;
 
-        let mut crypter = Ctr128::<Aes128>::new(
+        let mut crypter = Ctr128BE::<Aes128>::new(
             GenericArray::from_slice(&key.0),
             GenericArray::from_slice(&self.0[0x10..0x20]),
         );
