@@ -8,6 +8,11 @@ targets = [
 unmaintained = "deny"
 yanked = "deny"
 
+ignore = [
+    "RUSTSEC-2021-0139",
+    "RUSTSEC-2021-0145"
+]
+
 [licenses]
 allow = [
     "MIT",
