@@ -17,9 +17,9 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use cargo_metadata::camino::Utf8PathBuf;
 use cargo_metadata::{Message, Package};
 use cargo_toml2::CargoConfig;
-use clap::{App, Arg};
 use goblin::elf::section_header::{SHT_NOBITS, SHT_STRTAB, SHT_SYMTAB};
 use goblin::elf::{Elf, Header as ElfHeader, ProgramHeader};
 use linkle::format::{nacp::NacpFile, nxo::NxoFile, romfs::RomFs};
@@ -250,13 +250,9 @@ fn main() {
         env::args().skip(0)
     };
 
-    let matches = App::new(crate_name!())
+    let matches = command!()
         .about("Compile rust switch homebrews with ease!")
-        .arg(
-            Arg::with_name("CARGO_OPTIONS")
-                .raw(true)
-                .help("Options that will be passed to cargo build"),
-        )
+        .arg(arg!(["CARGO_OPTIONS"] "Options that will be passed to cargo build").raw(true))
         .after_help(CARGO_OPTIONS)
         .get_matches_from(args);
 
@@ -264,7 +260,7 @@ fn main() {
 
     let rust_target_path = match env::var("RUST_TARGET_PATH") {
         Err(VarError::NotPresent) => metadata.workspace_root.clone(),
-        s => PathBuf::from(s.unwrap()),
+        s => Utf8PathBuf::from(s.unwrap()),
     };
 
     let mut command = Command::new("xargo");
@@ -290,7 +286,7 @@ fn main() {
         .stdout(Stdio::piped())
         .env("RUST_TARGET_PATH", rust_target_path.as_os_str());
 
-    if let Some(cargo_opts) = matches.values_of("CARGO_OPTIONS") {
+    if let Some(cargo_opts) = matches.get_raw("CARGO_OPTIONS") {
         command.args(cargo_opts);
     }
 
@@ -349,7 +345,6 @@ fn main() {
                     None
                 };
 
-                let icon_file = icon_file.map(|v| v.to_string_lossy().into_owned());
                 let icon_file = icon_file.as_ref().map(|v| v.as_ref());
 
                 let mut nacp = target_metadata.nacp.unwrap_or_default();
@@ -366,7 +361,7 @@ fn main() {
                 let mut new_name = artifact.filenames[0].clone();
                 assert!(new_name.set_extension("nro"));
 
-                NxoFile::from_elf(artifact.filenames[0].to_str().unwrap())
+                NxoFile::from_elf(artifact.filenames[0].as_str())
                     .unwrap()
                     .write_nro(
                         &mut File::create(new_name.clone()).unwrap(),
@@ -376,7 +371,7 @@ fn main() {
                     )
                     .unwrap();
 
-                println!("Built {}", new_name.to_string_lossy());
+                println!("Built {}", new_name);
             }
             Ok(Message::CompilerArtifact(_artifact)) => {
                 //println!("{:#?}", artifact);
