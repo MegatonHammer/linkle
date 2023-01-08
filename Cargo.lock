@@ -107,14 +107,8 @@ version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c7fdb1b8afc62dd91f33496ef989fa5706c81c1cb9817d346dba2417e616e5f7"
 dependencies = [
- "byteorder 1.4.3",
+ "byteorder",
 ]
-
-[[package]]
-name = "byteorder"
-version = "0.5.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fc10e8cc6b2580fda3f36eb6dc5316657f812a3df879a44a66fc9f0fdbc4855"
 
 [[package]]
 name = "byteorder"
@@ -337,12 +331,9 @@ checksum = "fea41bba32d969b513997752735605054bc0dfa92b4c56bf1189f2e174be7a10"
 
 [[package]]
 name = "elf"
-version = "0.0.10"
+version = "0.0.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4841de15dbe0e49b9b62a417589299e3be0d557e0900d36acb87e6dae47197f5"
-dependencies = [
- "byteorder 0.5.3",
-]
+checksum = "4b9c86cae88373e32c872967c296dcdd3b25771dcc7da1c4ba060b4a68fd8db7"
 
 [[package]]
 name = "errno"
@@ -501,7 +492,7 @@ dependencies = [
  "aes",
  "bit_field",
  "blz-nx",
- "byteorder 1.4.3",
+ "byteorder",
  "cargo-toml2",
  "cargo_metadata",
  "cipher",
