@@ -21,7 +21,9 @@
 //! [switchbrew page]: https://switchbrew.org/w/index.php?title=NCA_Format
 
 use crate::error::Error;
-use crate::format::nca::structures::{ContentType, CryptoType, KeyType, RawNca, RawSuperblock};
+use crate::format::nca::structures::{
+    ContentType, CryptoType, KeyType, NcaMagic, RawNca, RawSuperblock,
+};
 use crate::impl_debug_deserialize_serialize_hexstring;
 use crate::pki::{Aes128Key, AesXtsKey, Keys};
 use binrw::BinRead;
@@ -126,7 +128,7 @@ fn get_master_key_revision(crypto_type: u8, crypto_type2: u8) -> u8 {
 fn decrypt_header(pki: &Keys, file: &mut dyn Read) -> Result<RawNca, Error> {
     // Decrypt header.
     let mut header = [0; 0xC00];
-    let mut decrypted_header = [0; 0xC00];
+    // let mut decrypted_header = [0; 0xC00];
 
     file.read_exact(&mut header)?;
 
@@ -136,52 +138,57 @@ fn decrypt_header(pki: &Keys, file: &mut dyn Read) -> Result<RawNca, Error> {
         key_name: "header_key",
         backtrace: Backtrace::generate(),
     })?;
-    decrypted_header[..0x400].copy_from_slice(&header[..0x400]);
-    header_key.decrypt(&mut decrypted_header[..0x400], 0, 0x200)?;
-
-    // skip 2 signature blocks
-    let magic = &decrypted_header[0x200..][..4];
-    match magic {
-        b"NCA3" => {
-            decrypted_header.copy_from_slice(&header);
-            header_key.decrypt(&mut decrypted_header, 0, 0x200)?;
-        }
-        b"NCA2" => {
-            todo!()
-            // for (i, fsheader) in raw_nca.fs_headers.iter().enumerate() {
-            //     let offset = 0x400 + i * 0x200;
-            //     if &fsheader._0x148[..] != &[0; 0xB8][..] {
-            //         decrypted_header[offset..offset + 0x200]
-            //             .copy_from_slice(&header[offset..offset + 0x200]);
-            //         header_key.decrypt(&mut decrypted_header[offset..offset + 0x200], 0, 0x200)?;
-            //     } else {
-            //         decrypted_header[offset..offset + 0x200].copy_from_slice(&[0; 0x200]);
-            //     }
-            // }
-        }
-        b"NCA0" => unimplemented!("NCA0 parsing is not implemented yet"),
-        _ => {
-            return Err(Error::NcaParse {
-                key_name: "header_key",
-                backtrace: Backtrace::generate(),
-            })
-        }
-    }
+    // decrypted_header[..0x400].copy_from_slice(&header[..0x400]);
+    // header_key.decrypt(&mut decrypted_header[..0x400], 0, 0x200)?;
+    //
+    // // skip 2 signature blocks
+    // let magic = &decrypted_header[0x200..][..4];
+    // match magic {
+    //     b"NCA3" => {
+    //         decrypted_header.copy_from_slice(&header);
+    //         header_key.decrypt(&mut decrypted_header, 0, 0x200)?;
+    //     }
+    //     b"NCA2" => {
+    //         todo!()
+    //         // for (i, fsheader) in raw_nca.fs_headers.iter().enumerate() {
+    //         //     let offset = 0x400 + i * 0x200;
+    //         //     if &fsheader._0x148[..] != &[0; 0xB8][..] {
+    //         //         decrypted_header[offset..offset + 0x200]
+    //         //             .copy_from_slice(&header[offset..offset + 0x200]);
+    //         //         header_key.decrypt(&mut decrypted_header[offset..offset + 0x200], 0, 0x200)?;
+    //         //     } else {
+    //         //         decrypted_header[offset..offset + 0x200].copy_from_slice(&[0; 0x200]);
+    //         //     }
+    //         // }
+    //     }
+    //     b"NCA0" => unimplemented!("NCA0 parsing is not implemented yet"),
+    //     _ => {
+    //         return Err(Error::NcaParse {
+    //             key_name: "header_key",
+    //             backtrace: Backtrace::generate(),
+    //         })
+    //     }
+    // }
 
     // println!("{}", pretty_hex::pretty_hex(&decrypted_header));
 
-    let mut raw_nca = std::io::Cursor::new(decrypted_header);
-    let raw_nca = RawNca::read_le(&mut raw_nca).expect("RawNca to be of the right size");
+    let mut raw_nca = std::io::Cursor::new(header);
+    let raw_nca = RawNca::read_le_args(&mut raw_nca, (header_key.clone(),))
+        .expect("RawNca to be of the right size");
     Ok(raw_nca)
 }
 
 impl<R: Read> Nca<R> {
     pub fn from_file(pki: &Keys, mut file: R) -> Result<Nca<R>, Error> {
-        let header = decrypt_header(pki, &mut file)?;
+        let RawNca {
+            sigs,
+            header,
+            fs_headers,
+        } = decrypt_header(pki, &mut file)?;
         let format = match &header.magic {
-            b"NCA3" => NcaFormat::Nca3,
-            b"NCA2" => NcaFormat::Nca2,
-            b"NCA0" => NcaFormat::Nca0,
+            NcaMagic::Nca3 => NcaFormat::Nca3,
+            NcaMagic::Nca2 => NcaFormat::Nca2,
+            NcaMagic::Nca0 => NcaFormat::Nca0,
             _ => unreachable!(),
         };
 
@@ -213,7 +220,7 @@ impl<R: Read> Nca<R> {
         for (idx, (section, fs)) in header
             .section_entries
             .iter()
-            .zip(header.fs_headers.iter())
+            .zip(fs_headers.iter())
             .enumerate()
         {
             // Check if section is present
@@ -252,12 +259,12 @@ impl<R: Read> Nca<R> {
             stream: file,
             json: NcaJson {
                 format,
-                sig: header.fixed_key_sig,
-                npdm_sig: header.npdm_sig,
+                sig: sigs.fixed_key_sig,
+                npdm_sig: sigs.npdm_sig,
                 is_gamecard: header.is_gamecard != 0,
-                content_type: ContentType::from(header.content_type),
+                content_type: header.content_type,
                 key_revision: master_key_revision,
-                key_type: KeyType::from(header.key_type),
+                key_type: header.key_type,
                 nca_size: header.nca_size,
                 title_id: TitleId(header.title_id),
                 // TODO: Store the SDK version in a more human readable format.

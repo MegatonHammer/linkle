@@ -6,16 +6,88 @@
 //! appropriate parser based on the machine's endianness.
 
 use crate::impl_debug_deserialize_serialize_hexstring;
-use binrw::{BinRead, BinResult, BinWrite, ReadOptions};
+use crate::pki::AesXtsKey;
+use binrw::{BinRead, BinResult, BinWrite, BinrwNamedArgs, ReadOptions};
 use serde_derive::{Deserialize, Serialize};
 use std::fmt;
-use std::io::{Read, Seek};
+use std::io::{Read, Seek, Write};
+use std::ops::Deref;
 
 #[repr(transparent)]
 #[derive(Clone, Copy, BinRead, BinWrite)]
 pub struct SigDebug(pub [u8; 0x100]);
 
 impl_debug_deserialize_serialize_hexstring!(SigDebug);
+
+const XTS_SECTOR_SIZE: usize = 0x200;
+
+#[derive(Debug, Clone, Copy)]
+pub struct XtsCryptSector<T, const Size: usize = XTS_SECTOR_SIZE>(pub T);
+
+impl<T> Deref for XtsCryptSector<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+#[derive(Copy, Clone, BinrwNamedArgs)]
+pub struct XtsCryptArgs {
+    pub key: AesXtsKey,
+    pub sector: usize,
+}
+
+impl<T: BinRead<Args = ()>, const Size: usize> BinRead for XtsCryptSector<T, Size> {
+    type Args = XtsCryptArgs;
+
+    fn read_options<R: Read + Seek>(
+        reader: &mut R,
+        options: &ReadOptions,
+        args: Self::Args,
+    ) -> BinResult<Self> {
+        let mut buf = [0u8; Size];
+        reader.read_exact(&mut buf)?;
+
+        args.key
+            .decrypt(&mut buf, args.sector, Size)
+            .map_err(|e| binrw::Error::Custom {
+                pos: 0,
+                err: Box::new(e),
+            })?;
+
+        let mut buf = std::io::Cursor::new(buf);
+        T::read_options(&mut buf, options, ()).map(XtsCryptSector)
+    }
+}
+
+impl<T: BinWrite<Args = ()>, const Size: usize> BinWrite for XtsCryptSector<T, Size> {
+    type Args = XtsCryptArgs;
+
+    fn write_options<W: Write + Seek>(
+        &self,
+        writer: &mut W,
+        options: &binrw::WriteOptions,
+        args: Self::Args,
+    ) -> BinResult<()> {
+        let mut buf = [0u8; Size];
+        let mut buf = std::io::Cursor::new(&mut buf[..]);
+        self.0.write_options(&mut buf, options, ())?;
+
+        assert_eq!(buf.position() as usize, Size, "Buffer not fully written");
+
+        let buf = buf.into_inner();
+
+        args.key
+            .encrypt(buf, args.sector, Size)
+            .map_err(|e| binrw::Error::Custom {
+                pos: 0,
+                err: Box::new(e),
+            })?;
+        writer.write_all(buf)?;
+        Ok(())
+    }
+}
 
 #[derive(Clone, Copy, BinRead, BinWrite)]
 pub struct SkipDebug<T: BinRead<Args = ()> + BinWrite<Args = ()> + 'static>(pub T);
@@ -46,11 +118,27 @@ pub enum ContentType {
     PublicData = 5,
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize, BinRead, BinWrite)]
+pub enum NcaMagic {
+    #[brw(magic = b"NCA0")]
+    Nca0,
+    #[brw(magic = b"NCA1")]
+    Nca1,
+    #[brw(magic = b"NCA2")]
+    Nca2,
+    #[brw(magic = b"NCA3")]
+    Nca3,
+}
+
 #[derive(Debug, Clone, Copy, BinRead, BinWrite)]
-pub struct RawNca {
+pub struct NcaSigs {
     pub fixed_key_sig: SigDebug,
     pub npdm_sig: SigDebug,
-    pub magic: [u8; 4],
+}
+
+#[derive(Debug, Clone, Copy, BinRead, BinWrite)]
+pub struct RawNcaHeader {
+    pub magic: NcaMagic,
     pub is_gamecard: u8,
     pub content_type: ContentType,
     pub crypto_type: u8,
@@ -68,21 +156,49 @@ pub struct RawNca {
     pub encrypted_ctr_key: [u8; 0x10],
     pub unknown_new_key: [u8; 0x10],
     pub _padding2: SkipDebug<[u8; 0xC0]>,
-    #[br(parse_with = read_fs_headers(section_entries))]
+}
+
+#[derive(Debug, Clone, Copy, BinRead, BinWrite)]
+#[brw(import(key: AesXtsKey))]
+pub struct RawNca {
+    #[brw(args { key, sector: 0 })]
+    pub sigs: XtsCryptSector<NcaSigs>,
+    #[brw(args { key, sector: 1 })]
+    pub header: XtsCryptSector<RawNcaHeader>,
+    #[br(parse_with = read_fs_headers(&header.0, key))]
     // #[bw(write_with = "binrw::io::write_zeroes")] // TODO: we need to write zeroes in case of None here!
     pub fs_headers: [Option<RawNcaFsHeader>; 4],
 }
 // assert_eq_size!(assert_nca_size; RawNca, [u8; 0xC00]);
 
 fn read_fs_headers<R: Read + Seek>(
-    section_entries: [RawSectionTableEntry; 4],
+    header: &RawNcaHeader,
+    key: AesXtsKey,
 ) -> impl FnOnce(&mut R, &ReadOptions, ()) -> BinResult<[Option<RawNcaFsHeader>; 4]> {
+    let magic = header.magic;
+    let section_entries = header.section_entries;
+
     move |reader, options, _| {
         let mut res = [None, None, None, None];
 
         for i in 0..4 {
             res[i] = if section_entries[i].media_start_offset != 0 {
-                Some(RawNcaFsHeader::read_options(reader, options, ())?)
+                let section_header = <XtsCryptSector<RawNcaFsHeader>>::read_options(
+                    reader,
+                    options,
+                    XtsCryptArgs {
+                        key,
+                        sector: match magic {
+                            // For pre-1.0.0 "NCA2" NCAs, the first 0x400 byte are encrypted the same way as in NCA3.
+                            // However, each section header is individually encrypted as though it were sector 0, instead of the appropriate sector as in NCA3.
+                            NcaMagic::Nca3 => 2 + i,
+                            NcaMagic::Nca2 => 0,
+                            _ => todo!("{:?}", magic),
+                        },
+                    },
+                )?;
+
+                Some(section_header.0)
             } else {
                 <[u8; 0x200]>::read_options(reader, options, ())?;
                 None
