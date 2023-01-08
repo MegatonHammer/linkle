@@ -1,7 +1,6 @@
 use block_modes::BlockModeError;
-use snafu::Backtrace;
-use snafu::GenerateBacktrace;
 use snafu::Snafu;
+use snafu::{Backtrace, GenerateImplicitData};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::str::Utf8Error;

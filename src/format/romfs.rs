@@ -1,7 +1,7 @@
 use crate::error::Error;
 use byteorder::{WriteBytesExt, LE};
 use snafu::Backtrace;
-use snafu::GenerateBacktrace;
+use snafu::GenerateImplicitData;
 use std::cell::RefCell;
 use std::fs::{self, File};
 use std::io::{self, Cursor, Write};
