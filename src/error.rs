@@ -1,3 +1,5 @@
+use crate::format::nca::RightsId;
+use crate::pki::KeyName;
 use snafu::Snafu;
 use snafu::{Backtrace, GenerateImplicitData};
 use std::io;
@@ -57,9 +59,14 @@ pub enum Error {
         error: PathBuf,
         backtrace: Backtrace,
     },
-    #[snafu(display("Missing key {}. Make sure your keyfile is complete", key_name))]
+    #[snafu(display("Missing key {:?}. Make sure your keyfile is complete", key_name))]
     MissingKey {
-        key_name: &'static str,
+        key_name: KeyName,
+        backtrace: Backtrace,
+    },
+    #[snafu(display("Missing titlekey for {}. Make sure you have provided it", rights_id))]
+    MissingTitleKey {
+        rights_id: RightsId,
         backtrace: Backtrace,
     },
     #[snafu(display("Failed to parse NCA. Make sure your {} key is correct.", key_name))]

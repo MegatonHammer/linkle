@@ -7,8 +7,10 @@ use cipher::{
 use cmac::{Cmac, Mac};
 use ctr::Ctr128BE;
 use getset::Getters;
+use hex::FromHexError;
 use ini::{self, Properties};
 use snafu::{Backtrace, GenerateImplicitData};
+use std::fmt::Debug;
 use std::fs::File;
 use std::io::{self, ErrorKind, Write};
 use std::path::Path;
@@ -18,6 +20,9 @@ use xts_mode::Xts128;
 pub struct Aes128Key(pub [u8; 0x10]);
 #[derive(Clone, Copy)]
 pub struct AesXtsKey(pub [u8; 0x20]);
+// title key is not a real key, you have to do some more derivations to get the content key from it
+#[derive(Clone, Copy)]
+pub struct TitleKey(pub [u8; 0x10]);
 pub struct EncryptedKeyblob(pub [u8; 0xB0]);
 pub struct Keyblob(pub [u8; 0x90]);
 pub struct Modulus(pub [u8; 0x100]);
@@ -168,41 +173,85 @@ impl AesXtsKey {
     }
 }
 
-fn key_to_aes(keys: &Properties, name: &str, key: &mut [u8]) -> Result<Option<()>, Error> {
-    let value = keys.get(name);
-    if let Some(value) = value {
-        if value.len() != key.len() * 2 {
-            return Err(Error::Crypto {
-                error: format!(
-                    "Key {} is not of the right size. It should be a {} byte hexstring",
-                    name,
-                    key.len() * 2
-                ),
-                backtrace: Backtrace::generate(),
-            });
-        }
-        for (idx, c) in value.bytes().enumerate() {
-            let c = match c {
-                b'a'..=b'z' => c - b'a' + 10,
-                b'A'..=b'Z' => c - b'A' + 10,
-                b'0'..=b'9' => c - b'0',
-                c => return Err(Error::Crypto { error: format!("Key {} contains invalid character {}. Each character should be a hexadecimal digit.", name, c as char), backtrace: Backtrace::generate()})
-            };
-            key[idx / 2] |= c << if idx % 2 == 0 { 4 } else { 0 };
-        }
-        Ok(Some(()))
-    } else {
-        Ok(None)
-    }
+fn parse_any_key(value: &str, name: &str, key: &mut [u8]) -> Result<(), Error> {
+    hex::decode_to_slice(value, key).map_err(|err| match err {
+        FromHexError::InvalidHexCharacter { c, .. } =>
+            Error::Crypto { error: format!("Key {} contains invalid character {}. Each character should be a hexadecimal digit.", name, c as char), backtrace: Backtrace::generate()},
+        FromHexError::OddLength | FromHexError::InvalidStringLength => Error::Crypto {
+            error: format!(
+                "Key {} is not of the right size. It should be a {} byte hexstring",
+                name,
+                key.len() * 2
+            ),
+            backtrace: Backtrace::generate(),
+        },
+    })?;
+    Ok(())
 }
 
-fn key_to_aes_array(
+// TODO: I kinda want to have the name be a KeyName enum, but that would require rewriting the ini parsing...
+pub fn parse_aes_key(value: &str, name: &str) -> Result<Aes128Key, Error> {
+    let mut key = [0; 0x10];
+    parse_any_key(value, name, &mut key)?;
+    Ok(Aes128Key(key))
+}
+
+pub fn parse_title_key(value: &str) -> Result<TitleKey, Error> {
+    let mut key = [0; 0x10];
+    parse_any_key(value, "title key", &mut key)?;
+    Ok(TitleKey(key))
+}
+
+pub fn parse_aes_xts_key(value: &str, name: &str) -> Result<AesXtsKey, Error> {
+    let mut key = [0; 0x20];
+    parse_any_key(value, name, &mut key)?;
+    Ok(AesXtsKey(key))
+}
+
+pub fn parse_keyblob(value: &str, name: &str) -> Result<Keyblob, Error> {
+    let mut keyblob = [0; 0x90];
+    parse_any_key(value, name, &mut keyblob)?;
+    Ok(Keyblob(keyblob))
+}
+
+pub fn parse_encrypted_keyblob(value: &str, name: &str) -> Result<EncryptedKeyblob, Error> {
+    let mut keyblob = [0; 0xB0];
+    parse_any_key(value, name, &mut keyblob)?;
+    Ok(EncryptedKeyblob(keyblob))
+}
+
+// helper functions to parse the key files
+fn key_to_aes(keys: &Properties, name: &str) -> Result<Option<Aes128Key>, Error> {
+    keys.get(name).map(|v| parse_aes_key(v, name)).transpose()
+}
+fn key_to_xts(keys: &Properties, name: &str) -> Result<Option<AesXtsKey>, Error> {
+    keys.get(name)
+        .map(|v| parse_aes_xts_key(v, name))
+        .transpose()
+}
+
+fn key_to_aes_array(keys: &Properties, name: &str, idx: usize) -> Result<Option<Aes128Key>, Error> {
+    key_to_aes(keys, &format!("{}_{:02x}", name, idx))
+}
+
+fn key_to_keyblob_array(
     keys: &Properties,
     name: &str,
     idx: usize,
-    key: &mut [u8],
-) -> Result<Option<()>, Error> {
-    key_to_aes(keys, &format!("{}_{:02x}", name, idx), key)
+) -> Result<Option<Keyblob>, Error> {
+    keys.get(&format!("{}_{:02x}", name, idx))
+        .map(|v| parse_keyblob(v, name))
+        .transpose()
+}
+
+fn key_to_encrypted_keyblob_array(
+    keys: &Properties,
+    name: &str,
+    idx: usize,
+) -> Result<Option<EncryptedKeyblob>, Error> {
+    keys.get(&format!("{}_{:02x}", name, idx))
+        .map(|v| parse_encrypted_keyblob(v, name))
+        .transpose()
 }
 
 trait OptionExt {
@@ -217,115 +266,278 @@ impl<T> OptionExt for Option<T> {
     }
 }
 
-#[derive(Default, Debug, Getters)]
+#[derive(Copy, Clone)]
+pub enum KeyName {
+    SecureBootKey,
+    TsecKey,
+    DeviceKey,
+    KeyblobKey(u8),
+    KeyblobMacKey(u8),
+    MarikoAesClassKey(u8),
+    MarikoKek,
+    MarikoBek,
+    KeyblobKeySource(u8),
+    KeyblobMacKeySource,
+    TsecRootKek,
+    Package1MacKek,
+    TsecAuthSignature(u8),
+    TsecRootKey(u8),
+    MasterKekSource(u8),
+    MarikoMasterKekSource(u8),
+    MasterKek(u8),
+    MasterKeySource,
+    MasterKey(u8),
+    Package1MacKey(u8),
+    Package1Key(u8),
+    Package2Key(u8),
+    Package2KeySource,
+    PerConsoleKeySource,
+    AesKekGenerationSource,
+    AesKeyGenerationSource,
+    KeyAreaKeyApplicationSource,
+    KeyAreaKeyOceanSource,
+    KeyAreaKeySystemSource,
+    TitlekekSource,
+    HeaderKekSource,
+    SdCardKekSource,
+    SdCardSaveKeySource,
+    SdCardNcaKeySource,
+    SaveMacKekSource,
+    SaveMacKeySource,
+    HeaderKeySource,
+    HeaderKey,
+    Titlekek(u8),
+    KeyAreaKeyApplication(u8),
+    KeyAreaKeyOcean(u8),
+    KeyAreaKeySystem(u8),
+    XciHeaderKey,
+    SaveMacKey,
+    SdCardSaveKey,
+    SdCardNcaKey,
+}
+
+impl Debug for KeyName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use KeyName::*;
+        // I wanna derive macros =(
+        match self {
+            SecureBootKey => write!(f, "secure_boot_key"),
+            TsecKey => write!(f, "tsec_key"),
+            DeviceKey => write!(f, "device_key"),
+            KeyblobKey(idx) => write!(f, "keyblob_key_{:02x}", idx),
+            KeyblobMacKey(idx) => write!(f, "keyblob_mac_key_{:02x}", idx),
+            MarikoAesClassKey(idx) => write!(f, "mariko_aes_class_key_{:02x}", idx),
+            MarikoKek => write!(f, "mariko_kek"),
+            MarikoBek => write!(f, "mariko_bek"),
+            KeyblobKeySource(idx) => write!(f, "keyblob_key_source_{:02x}", idx),
+            KeyblobMacKeySource => write!(f, "keyblob_mac_key_source"),
+            TsecRootKek => write!(f, "tsec_root_kek"),
+            Package1MacKek => write!(f, "package1_mac_kek"),
+            TsecAuthSignature(idx) => write!(f, "tsec_auth_signature_{:02x}", idx),
+            TsecRootKey(idx) => write!(f, "tsec_root_key_{:02x}", idx),
+            MasterKekSource(idx) => write!(f, "master_kek_source_{:02x}", idx),
+            MarikoMasterKekSource(idx) => write!(f, "mariko_master_kek_source_{:02x}", idx),
+            MasterKek(idx) => write!(f, "master_kek_{:02x}", idx),
+            MasterKeySource => write!(f, "master_key_source"),
+            MasterKey(idx) => write!(f, "master_key_{:02x}", idx),
+            Package1MacKey(idx) => write!(f, "package_1_mac_key_{:02x}", idx),
+            Package1Key(idx) => write!(f, "package_1_key_{:02x}", idx),
+            Package2Key(idx) => write!(f, "package_2_key_{:02x}", idx),
+            Package2KeySource => write!(f, "package_2_key_source"),
+            PerConsoleKeySource => write!(f, "per_console_key_source"),
+            AesKekGenerationSource => write!(f, "aes_kek_generation_source"),
+            AesKeyGenerationSource => write!(f, "aes_key_generation_source"),
+            KeyAreaKeyApplicationSource => write!(f, "key_area_key_application_source"),
+            KeyAreaKeyOceanSource => write!(f, "key_area_key_ocean_source"),
+            KeyAreaKeySystemSource => write!(f, "key_area_key_system_source"),
+            TitlekekSource => write!(f, "titlekek_source"),
+            HeaderKekSource => write!(f, "header_kek_source"),
+            SdCardKekSource => write!(f, "sd_card_kek_source"),
+            SdCardSaveKeySource => write!(f, "sd_card_save_key_source"),
+            SdCardNcaKeySource => write!(f, "sd_card_nca_key_source"),
+            SaveMacKekSource => write!(f, "save_mac_kek_source"),
+            SaveMacKeySource => write!(f, "save_mac_key_source"),
+            HeaderKeySource => write!(f, "header_key_source"),
+            HeaderKey => write!(f, "header_key"),
+            Titlekek(idx) => write!(f, "titlekek_{:02x}", idx),
+            KeyAreaKeyApplication(idx) => write!(f, "key_area_key_application_{:02x}", idx),
+            KeyAreaKeyOcean(idx) => write!(f, "key_area_key_ocean_{:02x}", idx),
+            KeyAreaKeySystem(idx) => write!(f, "key_area_key_system_{:02x}", idx),
+            XciHeaderKey => write!(f, "xci_header_key"),
+            SaveMacKey => write!(f, "save_mac_key"),
+            SdCardSaveKey => write!(f, "sd_card_save_key"),
+            SdCardNcaKey => write!(f, "sd_card_nca_key"),
+        }
+    }
+}
+
+#[derive(Default, Debug)]
 pub struct Keys {
-    #[get = "pub"]
     secure_boot_key: Option<Aes128Key>,
-    #[get = "pub"]
     tsec_key: Option<Aes128Key>,
-    #[get = "pub"]
     device_key: Option<Aes128Key>,
-    #[get = "pub"]
     keyblob_keys: [Option<Aes128Key>; 0x20],
-    #[get = "pub"]
     keyblob_mac_keys: [Option<Aes128Key>; 0x20],
-    #[get = "pub"]
     encrypted_keyblobs: [Option<EncryptedKeyblob>; 0x20],
-    #[get = "pub"]
     mariko_aes_class_keys: [Option<Aes128Key>; 0xC],
-    #[get = "pub"]
     mariko_kek: Option<Aes128Key>,
-    #[get = "pub"]
     mariko_bek: Option<Aes128Key>,
-    #[get = "pub"]
     keyblobs: [Option<Keyblob>; 0x20],
-    #[get = "pub"]
     keyblob_key_sources: [Option<Aes128Key>; 0x20],
-    #[get = "pub"]
     keyblob_mac_key_source: Option<Aes128Key>,
-    #[get = "pub"]
     tsec_root_kek: Option<Aes128Key>,
-    #[get = "pub"]
     package1_mac_kek: Option<Aes128Key>,
-    #[get = "pub"]
     package1_kek: Option<Aes128Key>,
-    #[get = "pub"]
     tsec_auth_signatures: [Option<Aes128Key>; 0x20],
-    #[get = "pub"]
     tsec_root_key: [Option<Aes128Key>; 0x20],
-    #[get = "pub"]
     master_kek_sources: [Option<Aes128Key>; 0x20],
-    #[get = "pub"]
     mariko_master_kek_sources: [Option<Aes128Key>; 0x20],
-    #[get = "pub"]
     master_keks: [Option<Aes128Key>; 0x20],
-    #[get = "pub"]
     master_key_source: Option<Aes128Key>,
-    #[get = "pub"]
     master_keys: [Option<Aes128Key>; 0x20],
-    #[get = "pub"]
     package1_mac_keys: [Option<Aes128Key>; 0x20],
-    #[get = "pub"]
     package1_keys: [Option<Aes128Key>; 0x20],
-    #[get = "pub"]
     package2_keys: [Option<Aes128Key>; 0x20],
-    #[get = "pub"]
     package2_key_source: Option<Aes128Key>,
-    #[get = "pub"]
     per_console_key_source: Option<Aes128Key>,
-    #[get = "pub"]
     aes_kek_generation_source: Option<Aes128Key>,
-    #[get = "pub"]
     aes_key_generation_source: Option<Aes128Key>,
-    #[get = "pub"]
     key_area_key_application_source: Option<Aes128Key>,
-    #[get = "pub"]
     key_area_key_ocean_source: Option<Aes128Key>,
-    #[get = "pub"]
     key_area_key_system_source: Option<Aes128Key>,
-    #[get = "pub"]
     titlekek_source: Option<Aes128Key>,
-    #[get = "pub"]
     header_kek_source: Option<Aes128Key>,
-    #[get = "pub"]
     sd_card_kek_source: Option<Aes128Key>,
-    #[get = "pub"]
     sd_card_save_key_source: Option<AesXtsKey>,
-    #[get = "pub"]
     sd_card_nca_key_source: Option<AesXtsKey>,
-    #[get = "pub"]
     save_mac_kek_source: Option<Aes128Key>,
-    #[get = "pub"]
     save_mac_key_source: Option<Aes128Key>,
-    #[get = "pub"]
     header_key_source: Option<AesXtsKey>,
-    #[get = "pub"]
     header_key: Option<AesXtsKey>,
-    #[get = "pub"]
     titlekeks: [Option<Aes128Key>; 0x20],
-    #[get = "pub"]
     key_area_key_application: [Option<Aes128Key>; 0x20],
-    #[get = "pub"]
     key_area_key_ocean: [Option<Aes128Key>; 0x20],
-    #[get = "pub"]
     key_area_key_system: [Option<Aes128Key>; 0x20],
-    #[get = "pub"]
     xci_header_key: Option<Aes128Key>,
-    #[get = "pub"]
     save_mac_key: Option<Aes128Key>,
-    #[get = "pub"]
     sd_card_save_key: Option<AesXtsKey>,
-    #[get = "pub"]
     sd_card_nca_key: Option<AesXtsKey>,
     #[allow(dead_code)]
-    #[get = "pub"]
     nca_hdr_fixed_key_modulus: [Option<Modulus>; 2],
     #[allow(dead_code)]
-    #[get = "pub"]
     acid_fixed_key_modulus: [Option<Modulus>; 2],
     #[allow(dead_code)]
-    #[get = "pub"]
     package2_fixed_key_modulus: Option<Modulus>,
+}
+
+impl Keys {
+    pub fn get_key(&self, key_name: KeyName) -> Result<Aes128Key, Error> {
+        use KeyName::*;
+        match key_name {
+            SecureBootKey => self.secure_boot_key,
+            TsecKey => self.tsec_key,
+            DeviceKey => self.device_key,
+            KeyblobKey(u8) => self.keyblob_keys[u8 as usize],
+            KeyblobMacKey(u8) => self.keyblob_mac_keys[u8 as usize],
+            MarikoAesClassKey(u8) => self.mariko_aes_class_keys[u8 as usize],
+            MarikoKek => self.mariko_kek,
+            MarikoBek => self.mariko_bek,
+            KeyblobKeySource(u8) => self.keyblob_key_sources[u8 as usize],
+            KeyblobMacKeySource => self.keyblob_mac_key_source,
+            TsecRootKek => self.tsec_root_kek,
+            Package1MacKek => self.package1_mac_kek,
+            TsecAuthSignature(u8) => self.tsec_auth_signatures[u8 as usize],
+            TsecRootKey(u8) => self.tsec_root_key[u8 as usize],
+            MasterKekSource(u8) => self.master_kek_sources[u8 as usize],
+            MarikoMasterKekSource(u8) => self.mariko_master_kek_sources[u8 as usize],
+            MasterKek(u8) => self.master_keks[u8 as usize],
+            MasterKeySource => self.master_key_source,
+            MasterKey(u8) => self.master_keys[u8 as usize],
+            Package1MacKey(u8) => self.package1_mac_keys[u8 as usize],
+            Package1Key(u8) => self.package1_keys[u8 as usize],
+            Package2Key(u8) => self.package2_keys[u8 as usize],
+            Package2KeySource => self.package2_key_source,
+            PerConsoleKeySource => self.per_console_key_source,
+            AesKekGenerationSource => self.aes_kek_generation_source,
+            AesKeyGenerationSource => self.aes_key_generation_source,
+            KeyAreaKeyApplicationSource => self.key_area_key_application_source,
+            KeyAreaKeyOceanSource => self.key_area_key_ocean_source,
+            KeyAreaKeySystemSource => self.key_area_key_system_source,
+            TitlekekSource => self.titlekek_source,
+            HeaderKekSource => self.header_kek_source,
+            SdCardKekSource => self.sd_card_kek_source,
+            SaveMacKekSource => self.save_mac_kek_source,
+            SaveMacKeySource => self.save_mac_key_source,
+            Titlekek(u8) => self.titlekeks[u8 as usize],
+            KeyAreaKeyApplication(u8) => self.key_area_key_application[u8 as usize],
+            KeyAreaKeyOcean(u8) => self.key_area_key_ocean[u8 as usize],
+            KeyAreaKeySystem(u8) => self.key_area_key_system[u8 as usize],
+            XciHeaderKey => self.xci_header_key,
+            SaveMacKey => self.save_mac_key,
+            SdCardSaveKeySource | SdCardNcaKeySource | HeaderKeySource | HeaderKey
+            | SdCardSaveKey | SdCardNcaKey => panic!("Attempt to get an XTS key as a normal key"),
+        }
+        .ok_or(Error::MissingKey {
+            key_name,
+            backtrace: Backtrace::generate(),
+        })
+    }
+
+    pub fn get_xts_key(&self, key_name: KeyName) -> Result<AesXtsKey, Error> {
+        use KeyName::*;
+        match key_name {
+            SdCardSaveKeySource => self.sd_card_save_key_source,
+            SdCardNcaKeySource => self.sd_card_nca_key_source,
+            HeaderKeySource => self.header_key_source,
+            HeaderKey => self.header_key,
+            SdCardSaveKey => self.sd_card_save_key,
+            SdCardNcaKey => self.sd_card_nca_key,
+            SecureBootKey
+            | TsecKey
+            | DeviceKey
+            | KeyblobKey(_)
+            | KeyblobMacKey(_)
+            | MarikoAesClassKey(_)
+            | MarikoKek
+            | MarikoBek
+            | KeyblobKeySource(_)
+            | KeyblobMacKeySource
+            | TsecRootKek
+            | Package1MacKek
+            | TsecAuthSignature(_)
+            | TsecRootKey(_)
+            | MasterKekSource(_)
+            | MarikoMasterKekSource(_)
+            | MasterKek(_)
+            | MasterKeySource
+            | MasterKey(_)
+            | Package1MacKey(_)
+            | Package1Key(_)
+            | Package2Key(_)
+            | Package2KeySource
+            | PerConsoleKeySource
+            | AesKekGenerationSource
+            | AesKeyGenerationSource
+            | KeyAreaKeyApplicationSource
+            | KeyAreaKeyOceanSource
+            | KeyAreaKeySystemSource
+            | TitlekekSource
+            | HeaderKekSource
+            | SdCardKekSource
+            | SaveMacKekSource
+            | SaveMacKeySource
+            | Titlekek(_)
+            | KeyAreaKeyApplication(_)
+            | KeyAreaKeyOcean(_)
+            | KeyAreaKeySystem(_)
+            | XciHeaderKey
+            | SaveMacKey => panic!("Attempt to get a normal key as an XTS key"),
+        }
+        .ok_or(Error::MissingKey {
+            key_name,
+            backtrace: Backtrace::generate(),
+        })
+    }
 }
 
 macro_rules! make_key_macros_write {
@@ -490,18 +702,16 @@ macro_rules! make_key_macros {
     ($d:tt, $self:ident, $section:ident) => {
         macro_rules! single_key {
             ($keyname:tt, $doc:expr, $console_unique:expr, [$d ($parent:expr),*]) => {
-                let mut key = [0; 0x10];
                 $self.$keyname.or_in(
-                    key_to_aes($section, stringify!($keyname), &mut key)?.map(|()| Aes128Key(key)),
+                    key_to_aes($section, stringify!($keyname))?
                 );
             };
         }
 
         macro_rules! single_key_xts {
             ($keyname:tt, $doc:expr, $console_unique:expr, [$d ($parent:expr),*]) => {
-                let mut key = [0; 0x20];
                 $self.$keyname.or_in(
-                    key_to_aes($section, stringify!($keyname), &mut key)?.map(|()| AesXtsKey(key)),
+                    key_to_xts($section, stringify!($keyname))?,
                 );
             };
         }
@@ -509,14 +719,13 @@ macro_rules! make_key_macros {
         macro_rules! multi_key {
             ($keyname:tt, $doc:expr, $console_unique:expr, $idx:ident => $d ([$d ($parent:expr),*]),*) => {
                 for (idx, v) in $self.$keyname.iter_mut().enumerate() {
-                    let mut key = [0; 0x10];
                     // remove trailing s
                     let mut name = String::from(stringify!($keyname));
                     if name.bytes().last() == Some(b's') {
                         name.pop();
                     }
                     v.or_in(
-                        key_to_aes_array($section, &name, idx, &mut key)?.map(|()| Aes128Key(key)),
+                        key_to_aes_array($section, &name, idx)?,
                     );
                 }
             };
@@ -525,14 +734,13 @@ macro_rules! make_key_macros {
         macro_rules! multi_keyblob {
             ($keyname:tt, $doc:expr, $console_unique:expr) => {
                 for (idx, v) in $self.$keyname.iter_mut().enumerate() {
-                    let mut key = [0; 0x90];
                     // remove trailing s
                     let mut name = String::from(stringify!($keyname));
                     if name.bytes().last() == Some(b's') {
                         name.pop();
                     }
                     v.or_in(
-                        key_to_aes_array($section, &name, idx, &mut key)?.map(|()| Keyblob(key)),
+                        key_to_keyblob_array($section, &name, idx)?,
                     );
                 }
             };
@@ -541,15 +749,13 @@ macro_rules! make_key_macros {
         macro_rules! multi_encrypted_keyblob {
             ($keyname:tt, $doc:expr, $console_unique:expr) => {
                 for (idx, v) in $self.$keyname.iter_mut().enumerate() {
-                    let mut key = [0; 0xB0];
                     // remove trailing s
                     let mut name = String::from(stringify!($keyname));
                     if name.bytes().last() == Some(b's') {
                         name.pop();
                     }
                     v.or_in(
-                        key_to_aes_array($section, &name, idx, &mut key)?
-                            .map(|()| EncryptedKeyblob(key)),
+                        key_to_encrypted_keyblob_array($section, &name, idx)?,
                     );
                 }
             };

@@ -99,6 +99,11 @@ impl<T: BinRead<Args = ()> + BinWrite<Args = ()> + 'static> fmt::Debug for SkipD
     }
 }
 
+#[repr(transparent)]
+#[derive(Clone, Copy, BinRead, BinWrite)]
+pub struct Hash([u8; 0x20]);
+impl_debug_deserialize_serialize_hexstring!(Hash);
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, BinRead, BinWrite)]
 #[brw(repr = u8)]
 pub enum KeyType {
@@ -136,6 +141,17 @@ pub struct NcaSigs {
     pub npdm_sig: SigDebug,
 }
 
+#[derive(Clone, Copy, BinRead, BinWrite)]
+pub struct RightsId(pub [u8; 0x10]);
+
+impl RightsId {
+    pub fn is_empty(&self) -> bool {
+        self.0.iter().all(|&b| b == 0)
+    }
+}
+
+impl_debug_deserialize_serialize_hexstring!(RightsId);
+
 #[derive(Debug, Clone, Copy, BinRead, BinWrite)]
 pub struct RawNcaHeader {
     pub magic: NcaMagic,
@@ -149,9 +165,9 @@ pub struct RawNcaHeader {
     pub sdk_version: u32,
     pub crypto_type2: u8,
     pub _padding1: SkipDebug<[u8; 0xF]>,
-    pub rights_id: [u8; 0x10],
+    pub rights_id: RightsId,
     pub section_entries: [RawSectionTableEntry; 4],
-    pub section_hashes: [[u8; 0x20]; 4],
+    pub section_hashes: [Hash; 4],
     pub encrypted_xts_key: [u8; 0x20],
     pub encrypted_ctr_key: [u8; 0x10],
     pub unknown_new_key: [u8; 0x10],
@@ -210,8 +226,8 @@ fn read_fs_headers<R: Read + Seek>(
 }
 
 #[derive(Debug, Clone, Copy, BinRead, BinWrite)]
-pub struct RawPfs0Superblock {
-    pub master_hash: [u8; 0x20],
+pub struct Pfs0Superblock {
+    pub master_hash: Hash,
     pub block_size: u32,
     pub always_2: u32,
     pub hash_table_offset: u64,
@@ -222,13 +238,60 @@ pub struct RawPfs0Superblock {
     pub _0x48: SkipDebug<[u8; 0xF0]>,
 }
 
+pub const IVFC_MAX_LEVEL: usize = 6;
+
+#[derive(Debug, Clone, Copy, BinRead, BinWrite)]
+pub struct BktrHeader {
+    pub offset: u64,
+    pub size: u64,
+    pub magic: [u8; 4], /* "BKTR" */
+    pub _0x14: u32,     /* Version? */
+    pub num_entries: u32,
+    pub _0x1c: u32, /* Reserved? */
+}
+
+#[derive(Debug, Clone, Copy, BinRead, BinWrite)]
+pub struct IvfcLevelHeader {
+    pub logical_offset: u64,
+    pub hash_data_size: u64,
+    pub block_size: u32,
+    pub reserved: u32,
+}
+
+#[derive(Debug, Clone, Copy, BinRead, BinWrite)]
+#[brw(magic = b"IVFC")]
+pub struct IvfcHeader {
+    pub id: u32,
+    pub master_hash_size: u32,
+    pub num_levels: u32,
+    pub level_headers: [IvfcLevelHeader; IVFC_MAX_LEVEL],
+    pub _0xa0: [u8; 0x20],
+    pub master_hash: Hash,
+}
+
+#[derive(Debug, Clone, Copy, BinRead, BinWrite)]
+pub struct BktrSuperblock {
+    pub ivfc_header: IvfcHeader,
+    pub _0xe0: [u8; 0x18],
+    pub relocation_header: BktrHeader,
+    pub subsection_header: BktrHeader,
+}
+
+#[derive(Debug, Clone, Copy, BinRead, BinWrite)]
+pub struct RomfsSuperblock {
+    pub ivfc_header: IvfcHeader,
+    pub _0xe0: [u8; 0x58],
+}
+
 #[derive(Clone, Copy, Debug, BinRead, BinWrite)]
-#[br(import(partition_type: RawPartitionType, crypt_type: CryptoType))]
+#[br(import(partition_type: RawPartitionType, fs_type: RawFsType, crypto_type: CryptoType))]
 pub enum RawSuperblock {
-    #[br(pre_assert(partition_type == RawPartitionType::Pfs0))]
-    Pfs0(RawPfs0Superblock),
-    // Romfs(RomfsSuperblock),
-    // Bktr(BktrSuperblock),
+    #[br(pre_assert(partition_type == RawPartitionType::Pfs0 && fs_type == RawFsType::Pfs0))]
+    Pfs0(Pfs0Superblock),
+    #[br(pre_assert(partition_type == RawPartitionType::RomFs && fs_type == RawFsType::RomFs && crypto_type == CryptoType::Bktr))]
+    Bktr(BktrSuperblock),
+    #[br(pre_assert(partition_type == RawPartitionType::RomFs && fs_type == RawFsType::RomFs))]
+    RomFs(RomfsSuperblock),
     // Nca0Romfs(Nca0RomfsSuperblock),
     Raw([u8; 0x138]),
 }
@@ -241,7 +304,7 @@ pub struct RawNcaFsHeader {
     pub fs_type: RawFsType,
     pub crypt_type: CryptoType,
     pub _0x5: [u8; 0x3],
-    #[br(args(partition_type, crypt_type))]
+    #[br(args(partition_type, fs_type, crypt_type))]
     pub superblock: RawSuperblock,
     pub section_ctr: u64,
     pub _0x148: [u8; 0xB8],
@@ -275,6 +338,5 @@ pub enum CryptoType {
 pub struct RawSectionTableEntry {
     pub media_start_offset: u32,
     pub media_end_offset: u32,
-    pub unknown1: u32,
-    pub unknown2: u32,
+    pub padding: [u8; 0x8],
 }

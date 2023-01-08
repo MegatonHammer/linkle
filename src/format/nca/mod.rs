@@ -22,10 +22,9 @@
 
 use crate::error::Error;
 use crate::format::nca::structures::{
-    ContentType, CryptoType, KeyType, NcaMagic, RawNca, RawSuperblock,
+    ContentType, CryptoType, Hash, KeyType, NcaMagic, RawNca, RawSuperblock,
 };
-use crate::impl_debug_deserialize_serialize_hexstring;
-use crate::pki::{Aes128Key, AesXtsKey, Keys};
+use crate::pki::{Aes128Key, AesXtsKey, KeyName, Keys, TitleKey};
 use binrw::BinRead;
 use serde_derive::{Deserialize, Serialize};
 use snafu::{Backtrace, GenerateImplicitData};
@@ -34,10 +33,7 @@ use std::io::Read;
 
 mod structures;
 
-#[repr(transparent)]
-#[derive(Clone, Copy)]
-struct Hash([u8; 0x20]);
-impl_debug_deserialize_serialize_hexstring!(Hash);
+pub use structures::RightsId;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 enum FsType {
@@ -63,9 +59,7 @@ enum NcaFormat {
 pub struct SectionJson {
     media_start_offset: u32,
     media_end_offset: u32,
-    unknown1: u32,
-    unknown2: u32,
-    crypto: CryptoType,
+    crypto: NcaCrypto,
     fstype: FsType,
     nounce: u64,
 }
@@ -92,9 +86,7 @@ pub struct NcaJson {
     nca_size: u64,
     title_id: TitleId,
     sdk_version: u32, // TODO: Better format
-    xts_key: AesXtsKey,
-    ctr_key: Aes128Key,
-    rights_id: Option<[u8; 0x10]>,
+    rights_id: RightsId,
     sections: [Option<SectionJson>; 4],
 }
 
@@ -104,18 +96,13 @@ pub struct Nca<R> {
     json: NcaJson,
 }
 
-fn get_key_area_key(pki: &Keys, key_version: usize, key_type: KeyType) -> Result<Aes128Key, Error> {
-    let key = match key_type {
-        KeyType::Application => pki.key_area_key_application()[key_version],
-        KeyType::Ocean => pki.key_area_key_ocean()[key_version],
-        KeyType::System => pki.key_area_key_system()[key_version],
+fn get_key_area_key(pki: &Keys, key_version: u8, key_type: KeyType) -> Result<Aes128Key, Error> {
+    let key_name = match key_type {
+        KeyType::Application => KeyName::KeyAreaKeyApplication(key_version),
+        KeyType::Ocean => KeyName::KeyAreaKeyOcean(key_version),
+        KeyType::System => KeyName::KeyAreaKeySystem(key_version),
     };
-    key.ok_or(Error::MissingKey {
-        key_name: Box::leak(
-            format!("key_area_key_application_{:02x}", key_version).into_boxed_str(),
-        ),
-        backtrace: Backtrace::generate(),
-    })
+    pki.get_key(key_name)
 }
 
 // Crypto is stupid. First, we need to get the max of crypto_type and crypto_type2.
@@ -134,10 +121,7 @@ fn decrypt_header(pki: &Keys, file: &mut dyn Read) -> Result<RawNca, Error> {
 
     // TODO: Check if NCA is already decrypted
 
-    let header_key = pki.header_key().as_ref().ok_or(Error::MissingKey {
-        key_name: "header_key",
-        backtrace: Backtrace::generate(),
-    })?;
+    let header_key = pki.get_xts_key(KeyName::HeaderKey)?;
     // decrypted_header[..0x400].copy_from_slice(&header[..0x400]);
     // header_key.decrypt(&mut decrypted_header[..0x400], 0, 0x200)?;
     //
@@ -173,13 +157,25 @@ fn decrypt_header(pki: &Keys, file: &mut dyn Read) -> Result<RawNca, Error> {
     // println!("{}", pretty_hex::pretty_hex(&decrypted_header));
 
     let mut raw_nca = std::io::Cursor::new(header);
-    let raw_nca = RawNca::read_le_args(&mut raw_nca, (header_key.clone(),))
-        .expect("RawNca to be of the right size");
+    let raw_nca =
+        RawNca::read_le_args(&mut raw_nca, (header_key,)).expect("RawNca to be of the right size");
     Ok(raw_nca)
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+enum NcaCrypto {
+    None,
+    Ctr(Aes128Key),
+    Bktr(Aes128Key),
+    Xts(AesXtsKey),
+}
+
 impl<R: Read> Nca<R> {
-    pub fn from_file(pki: &Keys, mut file: R) -> Result<Nca<R>, Error> {
+    pub fn from_file(
+        pki: &Keys,
+        mut file: R,
+        title_key: Option<TitleKey>, // TODO: get titlekey from a DB?
+    ) -> Result<Nca<R>, Error> {
         let RawNca {
             sigs,
             header,
@@ -200,19 +196,27 @@ impl<R: Read> Nca<R> {
         let master_key_revision = get_master_key_revision(header.crypto_type, header.crypto_type2);
 
         // Handle Rights ID.
-        let has_rights_id = header.rights_id != [0; 0x10];
+        let has_rights_id = !header.rights_id.is_empty();
 
-        let key_area_key = get_key_area_key(pki, master_key_revision as _, header.key_type)?;
+        let key_area_key = get_key_area_key(pki, master_key_revision, header.key_type)?;
 
-        let decrypted_keys = if !has_rights_id {
-            // TODO: NCA0 => return
-            (
-                key_area_key.derive_xts_key(&header.encrypted_xts_key)?,
-                key_area_key.derive_key(&header.encrypted_ctr_key)?,
+        let ctr_crypto_key = key_area_key.derive_key(&header.encrypted_ctr_key)?;
+        let xts_crypto_key = key_area_key.derive_xts_key(&header.encrypted_xts_key)?;
+        let title_key = if has_rights_id {
+            let titlekek = pki.get_key(KeyName::Titlekek(master_key_revision))?;
+
+            Some(
+                titlekek.derive_key(
+                    &title_key
+                        .ok_or_else(|| Error::MissingTitleKey {
+                            rights_id: header.rights_id,
+                            backtrace: Backtrace::generate(),
+                        })?
+                        .0,
+                )?,
             )
         } else {
-            // TODO: Implement RightsID crypto.
-            unimplemented!("Rights ID");
+            None
         };
 
         // Parse sections
@@ -225,33 +229,42 @@ impl<R: Read> Nca<R> {
         {
             // Check if section is present
             if let Some(fs) = fs {
-                if has_rights_id {
-                    unimplemented!("Rights ID");
-                } else {
-                    assert_eq!(fs.version, 2, "Invalid NCA FS Header version");
-                    unsafe {
-                        sections[idx] = Some(SectionJson {
-                            crypto: fs.crypt_type.into(),
-                            fstype: match fs.superblock {
-                                RawSuperblock::Pfs0(s) => FsType::Pfs0 {
-                                    master_hash: Hash(s.master_hash),
-                                    block_size: s.block_size,
-                                    hash_table_offset: s.hash_table_offset,
-                                    hash_table_size: s.hash_table_size,
-                                    pfs0_offset: s.pfs0_offset,
-                                    pfs0_size: s.pfs0_size,
-                                },
-                                // RawSuperblock::RomFs => FsType::RomFs,
-                                _ => unreachable!(),
-                            },
-                            nounce: fs.section_ctr,
-                            media_start_offset: section.media_start_offset,
-                            media_end_offset: section.media_end_offset,
-                            unknown1: section.unknown1,
-                            unknown2: section.unknown2,
-                        });
+                assert_eq!(fs.version, 2, "Invalid NCA FS Header version");
+
+                let crypto = if has_rights_id {
+                    match fs.crypt_type {
+                        CryptoType::Ctr => NcaCrypto::Ctr(title_key.unwrap()),
+                        CryptoType::Bktr => NcaCrypto::Bktr(title_key.unwrap()),
+                        CryptoType::None => NcaCrypto::None,
+                        CryptoType::Xts => unreachable!(),
                     }
-                }
+                } else {
+                    match fs.crypt_type {
+                        CryptoType::None => NcaCrypto::None,
+                        CryptoType::Xts => NcaCrypto::Xts(xts_crypto_key),
+                        CryptoType::Ctr => NcaCrypto::Ctr(ctr_crypto_key),
+                        CryptoType::Bktr => NcaCrypto::Bktr(ctr_crypto_key),
+                    }
+                };
+
+                sections[idx] = Some(SectionJson {
+                    crypto,
+                    fstype: match fs.superblock {
+                        RawSuperblock::Pfs0(s) => FsType::Pfs0 {
+                            master_hash: s.master_hash,
+                            block_size: s.block_size,
+                            hash_table_offset: s.hash_table_offset,
+                            hash_table_size: s.hash_table_size,
+                            pfs0_offset: s.pfs0_offset,
+                            pfs0_size: s.pfs0_size,
+                        },
+                        RawSuperblock::RomFs(_) => FsType::RomFs,
+                        _ => panic!("Unknown superblock type"),
+                    },
+                    nounce: fs.section_ctr,
+                    media_start_offset: section.media_start_offset,
+                    media_end_offset: section.media_end_offset,
+                });
             }
         }
 
@@ -269,11 +282,8 @@ impl<R: Read> Nca<R> {
                 title_id: TitleId(header.title_id),
                 // TODO: Store the SDK version in a more human readable format.
                 sdk_version: header.sdk_version,
-                xts_key: decrypted_keys.0,
-                ctr_key: decrypted_keys.1,
-                // TODO: Implement rights id.
-                rights_id: None,
-                sections: sections,
+                rights_id: header.rights_id,
+                sections,
             },
         };
 

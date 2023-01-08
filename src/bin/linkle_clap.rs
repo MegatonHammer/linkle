@@ -130,6 +130,9 @@ enum Opt {
         #[structopt(parse(from_os_str), long = "section3")]
         section3_file: Option<PathBuf>,
 
+        /// Sets the title key to use (if the NCA has RightsId crypto).
+        title_key: Option<String>,
+
         /// Use development keys instead of retail
         #[structopt(short = "d", long = "dev")]
         dev: bool,
@@ -276,7 +279,7 @@ fn print_keys(
     console_unique: bool,
     minimal: bool,
 ) -> Result<(), linkle::error::Error> {
-    let keys = linkle::pki::Keys::new(key_path, is_dev).unwrap();
+    let keys = linkle::pki::Keys::new(key_path, is_dev)?;
 
     keys.write(&mut std::io::stdout(), console_unique, minimal)
         .unwrap();
@@ -287,14 +290,16 @@ fn extract_nca(
     input_file: &Path,
     is_dev: bool,
     key_path: Option<&Path>,
+    title_key: Option<&str>,
     output_header_json: Option<&Path>,
     output_section0: Option<&Path>,
     output_section1: Option<&Path>,
     output_section2: Option<&Path>,
     output_section3: Option<&Path>,
 ) -> Result<(), linkle::error::Error> {
-    let keys = linkle::pki::Keys::new(key_path, is_dev).unwrap();
-    let nca = linkle::format::nca::Nca::from_file(&keys, File::open(input_file)?).unwrap();
+    let keys = linkle::pki::Keys::new(key_path, is_dev)?;
+    let title_key = title_key.map(linkle::pki::parse_title_key).transpose()?;
+    let nca = linkle::format::nca::Nca::from_file(&keys, File::open(input_file)?, title_key)?;
     todo!()
 }
 
@@ -356,12 +361,14 @@ fn process_args(app: &Opt) {
             ref section1_file,
             ref section2_file,
             ref section3_file,
+            title_key,
             dev,
             ref keyfile,
         } => extract_nca(
             input_file,
             *dev,
             to_opt_ref(keyfile),
+            to_opt_ref(title_key),
             to_opt_ref(header_file),
             to_opt_ref(section0_file),
             to_opt_ref(section1_file),
