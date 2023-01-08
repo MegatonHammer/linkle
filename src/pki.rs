@@ -1,49 +1,32 @@
 use crate::error::Error;
+use crate::impl_debug_deserialize_serialize_hexstring;
 use aes::Aes128;
 use cipher::{
     generic_array::GenericArray, BlockDecrypt, BlockEncrypt, KeyInit, KeyIvInit, StreamCipher,
 };
 use cmac::{Cmac, Mac};
 use ctr::Ctr128BE;
+use getset::Getters;
 use ini::{self, Properties};
 use snafu::{Backtrace, GenerateImplicitData};
-use std::fmt;
 use std::fs::File;
 use std::io::{self, ErrorKind, Write};
 use std::path::Path;
+use xts_mode::Xts128;
 
-struct Aes128Key([u8; 0x10]);
-struct AesXtsKey([u8; 0x20]);
-struct EncryptedKeyblob([u8; 0xB0]);
-struct Keyblob([u8; 0x90]);
-struct Modulus([u8; 0x100]);
+#[derive(Clone, Copy)]
+pub struct Aes128Key(pub [u8; 0x10]);
+#[derive(Clone, Copy)]
+pub struct AesXtsKey(pub [u8; 0x20]);
+pub struct EncryptedKeyblob(pub [u8; 0xB0]);
+pub struct Keyblob(pub [u8; 0x90]);
+pub struct Modulus(pub [u8; 0x100]);
 
-macro_rules! impl_debug {
-    ($for:ident) => {
-        impl fmt::Debug for $for {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                for byte in &self.0[..] {
-                    write!(f, "{:02X}", byte)?;
-                }
-                Ok(())
-            }
-        }
-        impl fmt::Display for $for {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                for byte in &self.0[..] {
-                    write!(f, "{:02X}", byte)?;
-                }
-                Ok(())
-            }
-        }
-    };
-}
-
-impl_debug!(Aes128Key);
-impl_debug!(AesXtsKey);
-impl_debug!(EncryptedKeyblob);
-impl_debug!(Keyblob);
-impl_debug!(Modulus);
+impl_debug_deserialize_serialize_hexstring!(Aes128Key);
+impl_debug_deserialize_serialize_hexstring!(AesXtsKey);
+impl_debug_deserialize_serialize_hexstring!(EncryptedKeyblob);
+impl_debug_deserialize_serialize_hexstring!(Keyblob);
+impl_debug_deserialize_serialize_hexstring!(Modulus);
 
 impl Keyblob {
     fn encrypt(
@@ -94,7 +77,7 @@ impl EncryptedKeyblob {
 }
 
 impl Aes128Key {
-    fn derive_key(&self, source: &[u8; 0x10]) -> Result<Aes128Key, Error> {
+    pub fn derive_key(&self, source: &[u8; 0x10]) -> Result<Aes128Key, Error> {
         let mut newkey = *source;
 
         let crypter = Aes128::new(GenericArray::from_slice(&self.0));
@@ -112,7 +95,7 @@ impl Aes128Key {
         Ok(Aes128Key(newkey))
     }
 
-    fn derive_xts_key(&self, source: &[u8; 0x20]) -> Result<AesXtsKey, Error> {
+    pub fn derive_xts_key(&self, source: &[u8; 0x20]) -> Result<AesXtsKey, Error> {
         let mut newkey = *source;
 
         let crypter = Aes128::new(GenericArray::from_slice(&self.0));
@@ -120,6 +103,68 @@ impl Aes128Key {
         crypter.decrypt_block(GenericArray::from_mut_slice(&mut newkey[0x10..0x20]));
 
         Ok(AesXtsKey(newkey))
+    }
+}
+
+fn get_tweak(mut sector: usize) -> [u8; 0x10] {
+    let mut tweak = [0; 0x10];
+    for tweak in tweak.iter_mut().rev() {
+        /* Nintendo LE custom tweak... */
+        *tweak = (sector & 0xFF) as u8;
+        sector >>= 8;
+    }
+    tweak
+}
+
+impl AesXtsKey {
+    pub fn decrypt(
+        &self,
+        data: &mut [u8],
+        mut sector: usize,
+        sector_size: usize,
+    ) -> Result<(), Error> {
+        if data.len() % sector_size != 0 {
+            return Err(Error::Crypto {
+                error: String::from("Length must be multiple of sectors!"),
+                backtrace: Backtrace::generate(),
+            });
+        }
+
+        for i in (0..data.len()).step_by(sector_size) {
+            let tweak = get_tweak(sector);
+
+            let key1 = Aes128::new(GenericArray::from_slice(&self.0[0x00..0x10]));
+            let key2 = Aes128::new(GenericArray::from_slice(&self.0[0x10..0x20]));
+            let crypter = Xts128::<Aes128>::new(key1, key2);
+            crypter.decrypt_sector(&mut data[i..i + sector_size], tweak);
+            sector += 1;
+        }
+        Ok(())
+    }
+
+    pub fn encrypt(
+        &self,
+        data: &mut [u8],
+        mut sector: usize,
+        sector_size: usize,
+    ) -> Result<(), Error> {
+        if data.len() % sector_size != 0 {
+            return Err(Error::Crypto {
+                error: String::from("Length must be multiple of sectors!"),
+                backtrace: Backtrace::generate(),
+            });
+        }
+
+        for i in (0..data.len()).step_by(sector_size) {
+            let tweak = get_tweak(sector);
+
+            let key1 = Aes128::new(GenericArray::from_slice(&self.0[0x00..0x10]));
+            let key2 = Aes128::new(GenericArray::from_slice(&self.0[0x10..0x20]));
+            let crypter = Xts128::<Aes128>::new(key1, key2);
+            crypter.decrypt_sector(&mut data[i..i + sector_size], tweak);
+            sector += 1;
+        }
+        Ok(())
     }
 }
 
@@ -172,63 +217,114 @@ impl<T> OptionExt for Option<T> {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Getters)]
 pub struct Keys {
+    #[get = "pub"]
     secure_boot_key: Option<Aes128Key>,
+    #[get = "pub"]
     tsec_key: Option<Aes128Key>,
+    #[get = "pub"]
     device_key: Option<Aes128Key>,
+    #[get = "pub"]
     keyblob_keys: [Option<Aes128Key>; 0x20],
+    #[get = "pub"]
     keyblob_mac_keys: [Option<Aes128Key>; 0x20],
+    #[get = "pub"]
     encrypted_keyblobs: [Option<EncryptedKeyblob>; 0x20],
+    #[get = "pub"]
     mariko_aes_class_keys: [Option<Aes128Key>; 0xC],
+    #[get = "pub"]
     mariko_kek: Option<Aes128Key>,
+    #[get = "pub"]
     mariko_bek: Option<Aes128Key>,
+    #[get = "pub"]
     keyblobs: [Option<Keyblob>; 0x20],
+    #[get = "pub"]
     keyblob_key_sources: [Option<Aes128Key>; 0x20],
+    #[get = "pub"]
     keyblob_mac_key_source: Option<Aes128Key>,
+    #[get = "pub"]
     tsec_root_kek: Option<Aes128Key>,
+    #[get = "pub"]
     package1_mac_kek: Option<Aes128Key>,
+    #[get = "pub"]
     package1_kek: Option<Aes128Key>,
+    #[get = "pub"]
     tsec_auth_signatures: [Option<Aes128Key>; 0x20],
+    #[get = "pub"]
     tsec_root_key: [Option<Aes128Key>; 0x20],
+    #[get = "pub"]
     master_kek_sources: [Option<Aes128Key>; 0x20],
+    #[get = "pub"]
     mariko_master_kek_sources: [Option<Aes128Key>; 0x20],
+    #[get = "pub"]
     master_keks: [Option<Aes128Key>; 0x20],
+    #[get = "pub"]
     master_key_source: Option<Aes128Key>,
+    #[get = "pub"]
     master_keys: [Option<Aes128Key>; 0x20],
+    #[get = "pub"]
     package1_mac_keys: [Option<Aes128Key>; 0x20],
+    #[get = "pub"]
     package1_keys: [Option<Aes128Key>; 0x20],
+    #[get = "pub"]
     package2_keys: [Option<Aes128Key>; 0x20],
+    #[get = "pub"]
     package2_key_source: Option<Aes128Key>,
+    #[get = "pub"]
     per_console_key_source: Option<Aes128Key>,
+    #[get = "pub"]
     aes_kek_generation_source: Option<Aes128Key>,
+    #[get = "pub"]
     aes_key_generation_source: Option<Aes128Key>,
+    #[get = "pub"]
     key_area_key_application_source: Option<Aes128Key>,
+    #[get = "pub"]
     key_area_key_ocean_source: Option<Aes128Key>,
+    #[get = "pub"]
     key_area_key_system_source: Option<Aes128Key>,
+    #[get = "pub"]
     titlekek_source: Option<Aes128Key>,
+    #[get = "pub"]
     header_kek_source: Option<Aes128Key>,
+    #[get = "pub"]
     sd_card_kek_source: Option<Aes128Key>,
+    #[get = "pub"]
     sd_card_save_key_source: Option<AesXtsKey>,
+    #[get = "pub"]
     sd_card_nca_key_source: Option<AesXtsKey>,
+    #[get = "pub"]
     save_mac_kek_source: Option<Aes128Key>,
+    #[get = "pub"]
     save_mac_key_source: Option<Aes128Key>,
+    #[get = "pub"]
     header_key_source: Option<AesXtsKey>,
+    #[get = "pub"]
     header_key: Option<AesXtsKey>,
+    #[get = "pub"]
     titlekeks: [Option<Aes128Key>; 0x20],
+    #[get = "pub"]
     key_area_key_application: [Option<Aes128Key>; 0x20],
+    #[get = "pub"]
     key_area_key_ocean: [Option<Aes128Key>; 0x20],
+    #[get = "pub"]
     key_area_key_system: [Option<Aes128Key>; 0x20],
+    #[get = "pub"]
     xci_header_key: Option<Aes128Key>,
+    #[get = "pub"]
     save_mac_key: Option<Aes128Key>,
+    #[get = "pub"]
     sd_card_save_key: Option<AesXtsKey>,
+    #[get = "pub"]
     sd_card_nca_key: Option<AesXtsKey>,
-    // these fields are not used yet, but will be when we implement the NCA decryption
     #[allow(dead_code)]
+    #[get = "pub"]
     nca_hdr_fixed_key_modulus: [Option<Modulus>; 2],
     #[allow(dead_code)]
+    #[get = "pub"]
     acid_fixed_key_modulus: [Option<Modulus>; 2],
     #[allow(dead_code)]
+    #[get = "pub"]
     package2_fixed_key_modulus: Option<Modulus>,
 }
 
@@ -593,7 +689,7 @@ fn generate_kek(
 
 impl Keys {
     #[allow(clippy::new_ret_no_self)]
-    fn new(
+    fn new_with_modulus(
         key_path: Option<&Path>,
         default_key_name: &Path,
         modulus: ([Modulus; 2], [Modulus; 2], Modulus),
@@ -647,7 +743,7 @@ impl Keys {
     }
 
     pub fn new_retail(key_path: Option<&Path>) -> Result<Keys, Error> {
-        Keys::new(
+        Keys::new_with_modulus(
             key_path,
             Path::new("prod.keys"),
             (
@@ -781,7 +877,7 @@ impl Keys {
     }
 
     pub fn new_dev(key_path: Option<&Path>) -> Result<Keys, Error> {
-        Keys::new(
+        Keys::new_with_modulus(
             key_path,
             Path::new("dev.keys"),
             (
@@ -912,6 +1008,14 @@ impl Keys {
                 ]),
             ),
         )
+    }
+
+    pub fn new(key_path: Option<&Path>, is_dev: bool) -> Result<Keys, Error> {
+        if is_dev {
+            Self::new_dev(key_path)
+        } else {
+            Self::new_retail(key_path)
+        }
     }
 
     #[allow(clippy::cognitive_complexity)]

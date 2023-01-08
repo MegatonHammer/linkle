@@ -57,6 +57,16 @@ pub enum Error {
         error: PathBuf,
         backtrace: Backtrace,
     },
+    #[snafu(display("Missing key {}. Make sure your keyfile is complete", key_name))]
+    MissingKey {
+        key_name: &'static str,
+        backtrace: Backtrace,
+    },
+    #[snafu(display("Failed to parse NCA. Make sure your {} key is correct.", key_name))]
+    NcaParse {
+        key_name: &'static str,
+        backtrace: Backtrace,
+    },
 }
 
 impl Error {

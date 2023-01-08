@@ -103,6 +103,41 @@ enum Opt {
         #[structopt(long = "console-unique")]
         show_console_unique: bool,
     },
+    /// Extract NCA
+    #[structopt(name = "nca_extract")]
+    NcaExtract {
+        /// Sets the input file to use.
+        #[structopt(parse(from_os_str))]
+        input_file: PathBuf,
+
+        /// Sets the output file to extract the header to.
+        #[structopt(parse(from_os_str), long = "header-json")]
+        header_file: Option<PathBuf>,
+
+        /// Sets the output file to extract the section0 to.
+        #[structopt(parse(from_os_str), long = "section0")]
+        section0_file: Option<PathBuf>,
+
+        /// Sets the output file to extract the section1 to.
+        #[structopt(parse(from_os_str), long = "section1")]
+        section1_file: Option<PathBuf>,
+
+        /// Sets the output file to extract the section2 to.
+        #[structopt(parse(from_os_str), long = "section2")]
+        section2_file: Option<PathBuf>,
+
+        /// Sets the output file to extract the section3 to.
+        #[structopt(parse(from_os_str), long = "section3")]
+        section3_file: Option<PathBuf>,
+
+        /// Use development keys instead of retail
+        #[structopt(short = "d", long = "dev")]
+        dev: bool,
+
+        /// Keyfile
+        #[structopt(parse(from_os_str), short = "k", long = "keyset")]
+        keyfile: Option<PathBuf>,
+    },
 }
 
 fn create_nxo(
@@ -241,15 +276,26 @@ fn print_keys(
     console_unique: bool,
     minimal: bool,
 ) -> Result<(), linkle::error::Error> {
-    let keys = if is_dev {
-        linkle::pki::Keys::new_dev(key_path).unwrap()
-    } else {
-        linkle::pki::Keys::new_retail(key_path).unwrap()
-    };
+    let keys = linkle::pki::Keys::new(key_path, is_dev).unwrap();
 
     keys.write(&mut std::io::stdout(), console_unique, minimal)
         .unwrap();
     Ok(())
+}
+
+fn extract_nca(
+    input_file: &Path,
+    is_dev: bool,
+    key_path: Option<&Path>,
+    output_header_json: Option<&Path>,
+    output_section0: Option<&Path>,
+    output_section1: Option<&Path>,
+    output_section2: Option<&Path>,
+    output_section3: Option<&Path>,
+) -> Result<(), linkle::error::Error> {
+    let keys = linkle::pki::Keys::new(key_path, is_dev).unwrap();
+    let nca = linkle::format::nca::Nca::from_file(&keys, File::open(input_file)?).unwrap();
+    todo!()
 }
 
 fn to_opt_ref<U: ?Sized, T: AsRef<U>>(s: &Option<T>) -> Option<&U> {
@@ -303,6 +349,25 @@ fn process_args(app: &Opt) {
             show_console_unique,
             minimal,
         } => print_keys(*dev, to_opt_ref(keyfile), *show_console_unique, *minimal),
+        Opt::NcaExtract {
+            ref input_file,
+            ref header_file,
+            ref section0_file,
+            ref section1_file,
+            ref section2_file,
+            ref section3_file,
+            dev,
+            ref keyfile,
+        } => extract_nca(
+            input_file,
+            *dev,
+            to_opt_ref(keyfile),
+            to_opt_ref(header_file),
+            to_opt_ref(section0_file),
+            to_opt_ref(section1_file),
+            to_opt_ref(section2_file),
+            to_opt_ref(section3_file),
+        ),
     };
 
     if let Err(e) = res {
