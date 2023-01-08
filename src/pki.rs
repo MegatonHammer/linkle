@@ -223,8 +223,12 @@ pub struct Keys {
     save_mac_key: Option<Aes128Key>,
     sd_card_save_key: Option<AesXtsKey>,
     sd_card_nca_key: Option<AesXtsKey>,
+    // these fields are not used yet, but will be when we implement the NCA decryption
+    #[allow(dead_code)]
     nca_hdr_fixed_key_modulus: [Option<Modulus>; 2],
+    #[allow(dead_code)]
     acid_fixed_key_modulus: [Option<Modulus>; 2],
+    #[allow(dead_code)]
     package2_fixed_key_modulus: Option<Modulus>,
 }
 
@@ -622,17 +626,15 @@ impl Keys {
         };
 
         let mut succeed = false;
-        for path in paths {
-            if let Some(path) = path {
-                match File::open(&path) {
-                    Ok(file) => {
-                        keys.read_from_ini(file)?;
-                        succeed = true;
-                        break;
-                    }
-                    Err(ref err) if err.kind() == ErrorKind::NotFound => (),
-                    Err(err) => println!("Failed to open {}: {}", path.display(), err),
+        for path in paths.into_iter().flatten() {
+            match File::open(&path) {
+                Ok(file) => {
+                    keys.read_from_ini(file)?;
+                    succeed = true;
+                    break;
                 }
+                Err(ref err) if err.kind() == ErrorKind::NotFound => (),
+                Err(err) => println!("Failed to open {}: {}", path.display(), err),
             }
         }
 
@@ -1150,10 +1152,10 @@ impl Keys {
                     Some(aes_key_generation_source),
                 ) => {
                     let header_kek = generate_kek(
-                        &header_kek_source,
+                        header_kek_source,
                         master_key,
-                        &aes_kek_generation_source,
-                        &aes_key_generation_source,
+                        aes_kek_generation_source,
+                        aes_key_generation_source,
                     )?;
                     self.header_key = Some(header_kek.derive_xts_key(&header_key_source.0)?);
                 }

@@ -24,7 +24,7 @@ impl RomFsDirEntCtx {
     fn internal_path(&self) -> String {
         let mut path = self.name.clone();
         let mut cur = self.parent.upgrade().unwrap();
-        while cur.borrow().name != "" {
+        while !cur.borrow().name.is_empty() {
             path = cur.borrow().name.clone() + "/" + &path;
             let new_cur = cur.borrow().parent.upgrade().unwrap();
             cur = new_cur;
@@ -198,7 +198,7 @@ impl RomFs {
                     + align64(file_to_add.borrow().name.len() as u64, 4);
             } else {
                 // Handling a parent component. Find the directory, create if it doesn't exist.
-                if component == "" {
+                if component.is_empty() {
                     continue;
                 }
                 let new_parent = if let Some(child) = parent

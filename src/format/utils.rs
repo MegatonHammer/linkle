@@ -31,8 +31,8 @@ pub fn get_segment_data(
     Ok(data)
 }
 
-pub fn compress_lz4(uncompressed_data: &mut Vec<u8>) -> std::io::Result<Vec<u8>> {
-    lz4::block::compress(&uncompressed_data[..], None, false)
+pub fn compress_lz4(uncompressed_data: &[u8]) -> std::io::Result<Vec<u8>> {
+    lz4::block::compress(uncompressed_data, None, false)
 }
 
 pub fn compress_blz(uncompressed_data: &mut Vec<u8>) -> blz_nx::BlzResult<Vec<u8>> {
@@ -83,8 +83,8 @@ impl<'de> Deserialize<'de> for HexOrNum {
             where
                 E: serde::de::Error,
             {
-                if v.starts_with("0x") {
-                    u64::from_str_radix(&v[2..], 16)
+                if let Some(v) = v.strip_prefix("0x") {
+                    u64::from_str_radix(v, 16)
                         .map_err(|_| E::invalid_value(Unexpected::Str(v), &"a hex-encoded string"))
                 } else {
                     Err(E::invalid_value(

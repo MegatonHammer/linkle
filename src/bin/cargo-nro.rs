@@ -146,7 +146,7 @@ fn generate_debuginfo_romfs<P: AsRef<Path>>(
             {
                 continue;
             }
-            if let Some(Ok(s)) = elf.shdr_strtab.get(section.sh_name) {
+            if let Some(s) = elf.shdr_strtab.get_at(section.sh_name) {
                 if !(s.starts_with(".debug") || s == ".comment") {
                     section.sh_type = SHT_NOBITS;
                 }
@@ -268,9 +268,7 @@ fn main() {
     let config_path = Path::new("./.cargo/config");
     let target = if config_path.exists() {
         let config: Option<CargoConfig> = cargo_toml2::from_path(config_path).ok();
-        config
-            .map(|config| config.build.map(|build| build.target).flatten())
-            .flatten()
+        config.and_then(|config| config.build.and_then(|build| build.target))
     } else {
         None
     };
@@ -278,7 +276,7 @@ fn main() {
     let target = target.as_deref().unwrap_or("aarch64-roblabla-switch");
 
     command
-        .args(&[
+        .args([
             "build",
             &format!("--target={}", target),
             "--message-format=json-diagnostic-rendered-ansi",

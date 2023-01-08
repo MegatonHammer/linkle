@@ -512,7 +512,7 @@ impl NxoFile {
 
         // .text segment
         let code_size = code.len() as u32;
-        let compressed_code = utils::compress_lz4(&mut code)?;
+        let compressed_code = utils::compress_lz4(&code)?;
         let compressed_code_size = compressed_code.len() as u32;
         output_writter.write_u32::<LittleEndian>(file_offset as u32)?;
         output_writter.write_u32::<LittleEndian>(text_segment.vaddr as u32)?;
@@ -525,7 +525,7 @@ impl NxoFile {
 
         // .rodata segment
         let rodata_size = rodata.len() as u32;
-        let compressed_rodata = utils::compress_lz4(&mut rodata)?;
+        let compressed_rodata = utils::compress_lz4(&rodata)?;
         let compressed_rodata_size = compressed_rodata.len() as u32;
         output_writter.write_u32::<LittleEndian>(file_offset as u32)?;
         output_writter.write_u32::<LittleEndian>(rodata_segment.vaddr as u32)?;
@@ -538,7 +538,7 @@ impl NxoFile {
 
         // .data segment
         let data_size = data.len() as u32;
-        let compressed_data = utils::compress_lz4(&mut data)?;
+        let compressed_data = utils::compress_lz4(&data)?;
         let compressed_data_size = compressed_data.len() as u32;
         let uncompressed_data_size = data.len() as u64;
         output_writter.write_u32::<LittleEndian>(file_offset as u32)?;
@@ -703,8 +703,7 @@ impl NxoFile {
         let caps = npdm
             .kernel_capabilities
             .iter()
-            .map(|v| v.encode())
-            .flatten()
+            .flat_map(|v| v.encode())
             .collect::<Vec<u32>>();
         assert!(
             caps.len() < 0x20,
