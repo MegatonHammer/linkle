@@ -29,10 +29,13 @@ use binrw::BinRead;
 use serde_derive::{Deserialize, Serialize};
 use snafu::{Backtrace, GenerateImplicitData};
 use std::cmp::max;
-use std::io::Read;
+use std::io::{Read, Seek};
 
+mod crypto_stream;
 mod structures;
 
+use crate::format::nca::crypto_stream::{CryptoStream, CryptoStreamState};
+use crate::utils::{ReadRange, TryClone};
 pub use structures::RightsId;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -62,6 +65,15 @@ pub struct SectionJson {
     crypto: NcaCrypto,
     fstype: FsType,
     nounce: u64,
+}
+
+impl SectionJson {
+    fn start_offset(&self) -> u64 {
+        self.media_start_offset as u64 * 0x200
+    }
+    fn size(&self) -> u64 {
+        (self.media_end_offset - self.media_start_offset) as u64 * 0x200
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
@@ -289,4 +301,48 @@ impl<R: Read> Nca<R> {
 
         Ok(nca)
     }
+}
+
+impl<R: TryClone + Seek> Nca<R> {
+    pub fn raw_section(&self, id: usize) -> Result<CryptoStream<ReadRange<R>>, Error> {
+        if let Some(section) = &self.json.sections[id] {
+            // TODO: Nca::raw_section should reopen the file, not dup2 the handle.
+            // (why though?)
+            let mut stream = self.stream.try_clone()?;
+            stream.seek(std::io::SeekFrom::Start(section.start_offset()))?;
+
+            Ok(CryptoStream {
+                stream: ReadRange::new(stream, section.start_offset(), section.size()),
+                // Keep a 1-block large buffer of data in case of partial reads.
+                buffer: [0; 0x10],
+                state: CryptoStreamState {
+                    json: section.clone(),
+                    offset: 0, // the offset is relative to the start of the section
+                },
+            })
+        } else {
+            Err(Error::MissingSection {
+                index: id,
+                backtrace: Backtrace::generate(),
+            })
+        }
+    }
+
+    // pub fn section(
+    //     &self,
+    //     id: usize,
+    // ) -> Result<VerificationStream<CryptoStream<ReadRange<R>>>, Error> {
+    //     let mut raw_section = self.raw_section(id)?;
+    //     let (start_offset, size) = match raw_section.state.json.fstype {
+    //         FsType::Pfs0 {
+    //             pfs0_offset,
+    //             pfs0_size,
+    //             ..
+    //         } => (pfs0_offset, pfs0_size),
+    //         _ => (0, raw_section.state.json.size()),
+    //     };
+    //     raw_section.seek_aligned(io::SeekFrom::Start(start_offset));
+    //     let json = raw_section.state.json.clone();
+    //     Ok(VerificationStream::new(raw_section, json))
+    // }
 }

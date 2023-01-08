@@ -22,7 +22,7 @@ impl_debug_deserialize_serialize_hexstring!(SigDebug);
 const XTS_SECTOR_SIZE: usize = 0x200;
 
 #[derive(Debug, Clone, Copy)]
-pub struct XtsCryptSector<T, const Size: usize = XTS_SECTOR_SIZE>(pub T);
+pub struct XtsCryptSector<T, const SIZE: usize = XTS_SECTOR_SIZE>(pub T);
 
 impl<T> Deref for XtsCryptSector<T> {
     type Target = T;
@@ -38,7 +38,7 @@ pub struct XtsCryptArgs {
     pub sector: usize,
 }
 
-impl<T: BinRead<Args = ()>, const Size: usize> BinRead for XtsCryptSector<T, Size> {
+impl<T: BinRead<Args = ()>, const SIZE: usize> BinRead for XtsCryptSector<T, SIZE> {
     type Args = XtsCryptArgs;
 
     fn read_options<R: Read + Seek>(
@@ -46,11 +46,11 @@ impl<T: BinRead<Args = ()>, const Size: usize> BinRead for XtsCryptSector<T, Siz
         options: &ReadOptions,
         args: Self::Args,
     ) -> BinResult<Self> {
-        let mut buf = [0u8; Size];
+        let mut buf = [0u8; SIZE];
         reader.read_exact(&mut buf)?;
 
         args.key
-            .decrypt(&mut buf, args.sector, Size)
+            .decrypt(&mut buf, args.sector, SIZE)
             .map_err(|e| binrw::Error::Custom {
                 pos: 0,
                 err: Box::new(e),
@@ -61,7 +61,7 @@ impl<T: BinRead<Args = ()>, const Size: usize> BinRead for XtsCryptSector<T, Siz
     }
 }
 
-impl<T: BinWrite<Args = ()>, const Size: usize> BinWrite for XtsCryptSector<T, Size> {
+impl<T: BinWrite<Args = ()>, const SIZE: usize> BinWrite for XtsCryptSector<T, SIZE> {
     type Args = XtsCryptArgs;
 
     fn write_options<W: Write + Seek>(
@@ -70,16 +70,16 @@ impl<T: BinWrite<Args = ()>, const Size: usize> BinWrite for XtsCryptSector<T, S
         options: &binrw::WriteOptions,
         args: Self::Args,
     ) -> BinResult<()> {
-        let mut buf = [0u8; Size];
+        let mut buf = [0u8; SIZE];
         let mut buf = std::io::Cursor::new(&mut buf[..]);
         self.0.write_options(&mut buf, options, ())?;
 
-        assert_eq!(buf.position() as usize, Size, "Buffer not fully written");
+        assert_eq!(buf.position() as usize, SIZE, "Buffer not fully written");
 
         let buf = buf.into_inner();
 
         args.key
-            .encrypt(buf, args.sector, Size)
+            .encrypt(buf, args.sector, SIZE)
             .map_err(|e| binrw::Error::Custom {
                 pos: 0,
                 err: Box::new(e),

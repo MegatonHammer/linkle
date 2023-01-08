@@ -74,6 +74,8 @@ pub enum Error {
         key_name: &'static str,
         backtrace: Backtrace,
     },
+    #[snafu(display("Missing section {}.", index))]
+    MissingSection { index: usize, backtrace: Backtrace },
 }
 
 impl Error {

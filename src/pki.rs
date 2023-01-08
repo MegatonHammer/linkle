@@ -6,7 +6,6 @@ use cipher::{
 };
 use cmac::{Cmac, Mac};
 use ctr::Ctr128BE;
-use getset::Getters;
 use hex::FromHexError;
 use ini::{self, Properties};
 use snafu::{Backtrace, GenerateImplicitData};
@@ -108,6 +107,41 @@ impl Aes128Key {
         crypter.decrypt_block(GenericArray::from_mut_slice(&mut newkey[0x10..0x20]));
 
         Ok(AesXtsKey(newkey))
+    }
+
+    /// Decrypt blocks in CTR mode.
+    pub fn decrypt_ctr(&self, buf: &mut [u8], ctr: &[u8; 0x10]) -> Result<(), Error> {
+        if buf.len() % 16 != 0 {
+            return Err(Error::Crypto {
+                error: String::from(
+                    "buf length should be a multiple of 16, the size of an AES block.",
+                ),
+                backtrace: Backtrace::generate(),
+            });
+        }
+
+        let key = GenericArray::from_slice(&self.0);
+        let iv = GenericArray::from_slice(ctr);
+        let mut crypter = <Ctr128BE<Aes128> as KeyIvInit>::new(key, iv);
+        crypter.apply_keystream(buf);
+        Ok(())
+    }
+
+    pub fn encrypt_ctr(&self, buf: &mut [u8], ctr: &[u8; 0x10]) -> Result<(), Error> {
+        if buf.len() % 16 != 0 {
+            return Err(Error::Crypto {
+                error: String::from(
+                    "buf length should be a multiple of 16, the size of an AES block.",
+                ),
+                backtrace: Backtrace::generate(),
+            });
+        }
+
+        let key = GenericArray::from_slice(&self.0);
+        let iv = GenericArray::from_slice(ctr);
+        let mut crypter = <Ctr128BE<Aes128> as KeyIvInit>::new(key, iv);
+        crypter.apply_keystream(buf);
+        Ok(())
     }
 }
 

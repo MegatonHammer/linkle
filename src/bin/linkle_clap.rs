@@ -300,7 +300,31 @@ fn extract_nca(
     let keys = linkle::pki::Keys::new(key_path, is_dev)?;
     let title_key = title_key.map(linkle::pki::parse_title_key).transpose()?;
     let nca = linkle::format::nca::Nca::from_file(&keys, File::open(input_file)?, title_key)?;
-    todo!()
+    // if let Some(output_header_json) = output_header_json {
+    //     let mut output_header_json = File::create(output_header_json)?;
+    //     nca.write_json(&mut output_header_json).unwrap();
+    // }
+    if let Some(output_section0) = output_section0 {
+        let mut output_section0 = File::create(output_section0)?;
+        let mut section = nca.raw_section(0).unwrap();
+        std::io::copy(&mut section, &mut output_section0)?;
+    }
+    if let Some(output_section1) = output_section1 {
+        let mut output_section1 = File::create(output_section1)?;
+        let mut section = nca.raw_section(1).unwrap();
+        std::io::copy(&mut section, &mut output_section1)?;
+    }
+    if let Some(output_section2) = output_section2 {
+        let mut output_section2 = File::create(output_section2)?;
+        let mut section = nca.raw_section(2).unwrap();
+        std::io::copy(&mut section, &mut output_section2)?;
+    }
+    if let Some(output_section3) = output_section3 {
+        let mut output_section3 = File::create(output_section3)?;
+        let mut section = nca.raw_section(3).unwrap();
+        std::io::copy(&mut section, &mut output_section3)?;
+    }
+    Ok(())
 }
 
 fn to_opt_ref<U: ?Sized, T: AsRef<U>>(s: &Option<T>) -> Option<&U> {
