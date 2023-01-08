@@ -1,7 +1,5 @@
-use block_modes::BlockModeError;
-use snafu::Backtrace;
-use snafu::GenerateBacktrace;
 use snafu::Snafu;
+use snafu::{Backtrace, GenerateImplicitData};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::str::Utf8Error;
@@ -25,11 +23,6 @@ pub enum Error {
         error: io::Error,
         backtrace: Backtrace,
     },
-    #[snafu(display("Decryption failed"))]
-    BlockMode {
-        error: BlockModeError,
-        backtrace: Backtrace,
-    },
     #[snafu(display("Error parsing the INI file: {}", error))]
     Ini {
         error: ini::Error,
@@ -39,7 +32,7 @@ pub enum Error {
     Crypto { error: String, backtrace: Backtrace },
     #[snafu(display("Invalid keyblob {}: {}.", id, error))]
     MacError {
-        error: cmac::crypto_mac::MacError,
+        error: digest::MacError,
         id: usize,
         backtrace: Backtrace,
     },
@@ -118,15 +111,6 @@ impl From<ini::Error> for Error {
     }
 }
 
-impl From<BlockModeError> for Error {
-    fn from(error: BlockModeError) -> Error {
-        Error::BlockMode {
-            error,
-            backtrace: Backtrace::generate(),
-        }
-    }
-}
-
 impl From<serde_json::error::Error> for Error {
     fn from(error: serde_json::error::Error) -> Error {
         Error::Deserialization { error }
@@ -144,8 +128,8 @@ impl From<FromUtf8Error> for Error {
     }
 }
 
-impl From<(usize, cmac::crypto_mac::MacError)> for Error {
-    fn from((id, error): (usize, cmac::crypto_mac::MacError)) -> Error {
+impl From<(usize, digest::MacError)> for Error {
+    fn from((id, error): (usize, digest::MacError)) -> Error {
         Error::MacError {
             error,
             id,

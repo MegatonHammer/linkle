@@ -12,12 +12,12 @@ pub fn align_up<T: Num + Not<Output = T> + BitAnd<Output = T> + Copy>(addr: T, a
 
 // Why is this not a trait...
 pub trait TryClone: Sized {
-    fn try_clone(&self) -> std::io::Result<Self>;
+    fn try_clone(&self) -> io::Result<Self>;
 }
 
 impl TryClone for std::fs::File {
-    fn try_clone(&self) -> std::io::Result<Self> {
-        std::fs::File::try_clone(&self)
+    fn try_clone(&self) -> io::Result<Self> {
+        std::fs::File::try_clone(self)
     }
 }
 

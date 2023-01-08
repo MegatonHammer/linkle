@@ -3,7 +3,7 @@ use crate::format::utils;
 use crate::utils::{align_up, ReadRange, TryClone};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use snafu::Backtrace;
-use snafu::GenerateBacktrace;
+use snafu::GenerateImplicitData;
 use std::fs::File;
 use std::io::{self, BufRead, Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;

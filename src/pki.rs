@@ -1,16 +1,12 @@
 use crate::error::Error;
-use aes::cipher::generic_array::GenericArray;
-use aes::cipher::BlockCipher;
 use aes::Aes128;
-use aes::NewBlockCipher;
-use block_modes::cipher::SyncStreamCipher;
-use cmac::crypto_mac::Mac;
-use cmac::{Cmac, NewMac};
-use ctr::cipher::stream::NewStreamCipher;
-use ctr::Ctr128;
+use cipher::{
+    generic_array::GenericArray, BlockDecrypt, BlockEncrypt, KeyInit, KeyIvInit, StreamCipher,
+};
+use cmac::{Cmac, Mac};
+use ctr::Ctr128BE;
 use ini::{self, Properties};
-use snafu::Backtrace;
-use snafu::GenerateBacktrace;
+use snafu::{Backtrace, GenerateImplicitData};
 use std::fmt;
 use std::fs::File;
 use std::io::{self, ErrorKind, Write};
@@ -59,13 +55,13 @@ impl Keyblob {
         let mut encrypted_keyblob = [0; 0xB0];
         encrypted_keyblob[0x20..].copy_from_slice(&self.0);
 
-        let mut crypter = Ctr128::<Aes128>::new(
+        let mut crypter = <Ctr128BE<Aes128> as KeyIvInit>::new(
             GenericArray::from_slice(&key.0),
             GenericArray::from_slice(&encrypted_keyblob[0x10..0x20]),
         );
         crypter.apply_keystream(&mut encrypted_keyblob[0x20..]);
 
-        let mut cmac = Cmac::<Aes128>::new_varkey(&mac_key.0[..]).unwrap();
+        let mut cmac = <Cmac<Aes128> as KeyInit>::new_from_slice(&mac_key.0[..]).unwrap();
         cmac.update(&encrypted_keyblob[0x10..]);
         encrypted_keyblob[..0x10].copy_from_slice(cmac.finalize().into_bytes().as_slice());
         Ok(EncryptedKeyblob(encrypted_keyblob))
@@ -82,12 +78,12 @@ impl EncryptedKeyblob {
         let mut keyblob = [0; 0x90];
         keyblob.copy_from_slice(&self.0[0x20..]);
 
-        let mut cmac = Cmac::<Aes128>::new_varkey(&mac_key.0[..]).unwrap();
+        let mut cmac = <Cmac<Aes128> as KeyInit>::new_from_slice(&mac_key.0[..]).unwrap();
         cmac.update(&self.0[0x10..]);
-        cmac.verify(&self.0[..0x10])
+        cmac.verify(GenericArray::from_slice(&self.0[..0x10]))
             .map_err(|err| (keyblob_id, err))?;
 
-        let mut crypter = Ctr128::<Aes128>::new(
+        let mut crypter = Ctr128BE::<Aes128>::new(
             GenericArray::from_slice(&key.0),
             GenericArray::from_slice(&self.0[0x10..0x20]),
         );
@@ -227,8 +223,12 @@ pub struct Keys {
     save_mac_key: Option<Aes128Key>,
     sd_card_save_key: Option<AesXtsKey>,
     sd_card_nca_key: Option<AesXtsKey>,
+    // these fields are not used yet, but will be when we implement the NCA decryption
+    #[allow(dead_code)]
     nca_hdr_fixed_key_modulus: [Option<Modulus>; 2],
+    #[allow(dead_code)]
     acid_fixed_key_modulus: [Option<Modulus>; 2],
+    #[allow(dead_code)]
     package2_fixed_key_modulus: Option<Modulus>,
 }
 
@@ -626,17 +626,15 @@ impl Keys {
         };
 
         let mut succeed = false;
-        for path in paths {
-            if let Some(path) = path {
-                match File::open(&path) {
-                    Ok(file) => {
-                        keys.read_from_ini(file)?;
-                        succeed = true;
-                        break;
-                    }
-                    Err(ref err) if err.kind() == ErrorKind::NotFound => (),
-                    Err(err) => println!("Failed to open {}: {}", path.display(), err),
+        for path in paths.into_iter().flatten() {
+            match File::open(&path) {
+                Ok(file) => {
+                    keys.read_from_ini(file)?;
+                    succeed = true;
+                    break;
                 }
+                Err(ref err) if err.kind() == ErrorKind::NotFound => (),
+                Err(err) => println!("Failed to open {}: {}", path.display(), err),
             }
         }
 
@@ -1154,10 +1152,10 @@ impl Keys {
                     Some(aes_key_generation_source),
                 ) => {
                     let header_kek = generate_kek(
-                        &header_kek_source,
+                        header_kek_source,
                         master_key,
-                        &aes_kek_generation_source,
-                        &aes_key_generation_source,
+                        aes_kek_generation_source,
+                        aes_key_generation_source,
                     )?;
                     self.header_key = Some(header_kek.derive_xts_key(&header_key_source.0)?);
                 }
