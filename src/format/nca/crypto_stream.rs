@@ -1,5 +1,5 @@
 use crate::error::Error;
-use crate::format::nca::{NcaCrypto, NcaSectionHeader};
+use crate::format::nca::{NcaCrypto, NcaSectionInfo};
 use crate::utils::align_down;
 use byteorder::{ByteOrder, BE};
 use std::cmp::min;
@@ -21,11 +21,11 @@ pub struct CryptoStream<R> {
 #[derive(Debug)]
 pub struct CryptoStreamState {
     pub(super) offset: u64,
-    pub(super) json: NcaSectionHeader,
+    pub(super) json: NcaSectionInfo,
 }
 
 impl<R: Seek> CryptoStream<R> {
-    fn seek_aligned(&mut self, from: io::SeekFrom) -> io::Result<()> {
+    pub fn seek_aligned(&mut self, from: io::SeekFrom) -> io::Result<()> {
         let new_offset = match from {
             io::SeekFrom::Start(cur) => cur,
             io::SeekFrom::Current(val) => (self.state.offset as i64 + val) as u64,
@@ -42,7 +42,7 @@ impl<R: Seek> CryptoStream<R> {
 
 impl CryptoStreamState {
     fn get_ctr(&self) -> [u8; 0x10] {
-        let offset = self.json.start_offset() / 16 + self.offset / 16;
+        let offset = self.json.media_start_offset / 16 + self.offset / 16;
         let mut ctr = [0; 0x10];
         // Write section nonce in Big Endian.
         BE::write_u64(&mut ctr[..8], self.json.nonce);
@@ -178,7 +178,7 @@ impl<W: Write + Seek> Write for CryptoStream<W> {
             self.state.offset += leftovers as u64;
         }
 
-        Ok(previous_leftovers + buf.len())
+        Ok(previous_leftovers_written + buf.len())
     }
 
     fn flush(&mut self) -> io::Result<()> {

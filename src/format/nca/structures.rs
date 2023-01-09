@@ -1,15 +1,15 @@
 //! Raw NCA structures
 //!
-//! Those are used by the NCA parsing code, basically casting the byte slices
-//! to those types through the plain crate. This only works on Little Endian
-//! hosts! Ideally, we would have a derive macro that generates an
-//! appropriate parser based on the machine's endianness.
+//! Those are used by the NCA parsing code, some of them exposed to the user.
+//!
+//! The parsing is implemented declaratively using `binrw`
 
 use crate::impl_debug_deserialize_serialize_hexstring;
 use crate::pki::AesXtsKey;
-use binrw::{BinRead, BinResult, BinWrite, BinrwNamedArgs, ReadOptions};
-use serde_derive::{Deserialize, Serialize};
+use binrw::{BinRead, BinResult, BinWrite, BinrwNamedArgs, ReadOptions, WriteOptions};
+use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::fmt::Debug;
 use std::io::{Read, Seek, Write};
 use std::ops::Deref;
 
@@ -89,20 +89,75 @@ impl<T: BinWrite<Args = ()>, const SIZE: usize> BinWrite for XtsCryptSector<T, S
     }
 }
 
-#[derive(Clone, Copy, BinRead, BinWrite)]
-pub struct SkipDebug<T: BinRead<Args = ()> + BinWrite<Args = ()> + 'static>(pub T);
-
-impl<T: BinRead<Args = ()> + BinWrite<Args = ()> + 'static> fmt::Debug for SkipDebug<T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "SkipDebug")?;
-        Ok(())
-    }
-}
-
 #[repr(transparent)]
 #[derive(Clone, Copy, BinRead, BinWrite)]
 pub struct Hash([u8; 0x20]);
 impl_debug_deserialize_serialize_hexstring!(Hash);
+
+#[repr(transparent)]
+#[derive(Clone, Copy, Serialize, Deserialize, BinRead, BinWrite)]
+pub struct TitleId(u64);
+
+impl Debug for TitleId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:016x}", self.0)
+    }
+}
+
+#[derive(Clone, Copy, BinRead, BinWrite)]
+pub struct RightsId(pub [u8; 0x10]);
+
+impl RightsId {
+    pub fn is_empty(&self) -> bool {
+        self.0.iter().all(|&b| b == 0)
+    }
+}
+
+impl_debug_deserialize_serialize_hexstring!(RightsId);
+
+#[derive(Clone, Copy, BinRead, BinWrite)]
+pub struct SdkVersion {
+    pub revision: u8,
+    pub micro: u8,
+    pub minor: u8,
+    pub major: u8,
+}
+
+impl Debug for SdkVersion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // it's in little endian, so the major version is the last byte
+        write!(
+            f,
+            "{}.{}.{}.{}",
+            self.major, self.minor, self.micro, self.revision
+        )
+    }
+}
+
+impl Serialize for SdkVersion {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&format!("{:?}", self))
+    }
+}
+
+impl<'de> Deserialize<'de> for SdkVersion {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        let mut parts = s.split('.');
+        // TODO: make this fallible
+        let major = parts.next().unwrap().parse::<u8>().unwrap();
+        let minor = parts.next().unwrap().parse::<u8>().unwrap();
+        let micro = parts.next().unwrap().parse::<u8>().unwrap();
+        let revision = parts.next().unwrap().parse::<u8>().unwrap();
+
+        Ok(SdkVersion {
+            revision,
+            micro,
+            minor,
+            major,
+        })
+    }
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, BinRead, BinWrite)]
 #[brw(repr = u8)]
@@ -141,37 +196,44 @@ pub struct NcaSigs {
     pub npdm_sig: SigDebug,
 }
 
-#[derive(Clone, Copy, BinRead, BinWrite)]
-pub struct RightsId(pub [u8; 0x10]);
-
-impl RightsId {
-    pub fn is_empty(&self) -> bool {
-        self.0.iter().all(|&b| b == 0)
-    }
-}
-
-impl_debug_deserialize_serialize_hexstring!(RightsId);
-
 #[derive(Debug, Clone, Copy, BinRead, BinWrite)]
 pub struct RawNcaHeader {
     pub magic: NcaMagic,
-    pub is_gamecard: u8,
+    #[br(parse_with = read_bool)]
+    #[bw(write_with = write_bool)]
+    pub is_gamecard: bool,
     pub content_type: ContentType,
     pub crypto_type: u8,
     pub key_type: KeyType,
     pub nca_size: u64,
-    pub title_id: u64,
-    pub _padding0: SkipDebug<u32>,
-    pub sdk_version: u32,
+    #[brw(pad_after = 4)]
+    pub title_id: TitleId,
+    pub sdk_version: SdkVersion,
     pub crypto_type2: u8,
-    pub _padding1: SkipDebug<[u8; 0xF]>,
+    #[brw(pad_after = 0xf)]
     pub rights_id: RightsId,
     pub section_entries: [RawSectionTableEntry; 4],
     pub section_hashes: [Hash; 4],
     pub encrypted_xts_key: [u8; 0x20],
     pub encrypted_ctr_key: [u8; 0x10],
+    #[brw(pad_after = 0xc0)]
     pub unknown_new_key: [u8; 0x10],
-    pub _padding2: SkipDebug<[u8; 0xC0]>,
+}
+
+fn read_bool<R: Read>(reader: &mut R, _options: &ReadOptions, _args: ()) -> BinResult<bool> {
+    let mut buf = [0u8; 1];
+    reader.read_exact(&mut buf)?;
+    Ok(buf[0] != 0)
+}
+
+fn write_bool<W: Write>(
+    value: &bool,
+    writer: &mut W,
+    _options: &WriteOptions,
+    _args: (),
+) -> BinResult<()> {
+    writer.write_all(&[u8::from(*value)])?;
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, BinRead, BinWrite)]
@@ -185,7 +247,6 @@ pub struct RawNca {
     // #[bw(write_with = "binrw::io::write_zeroes")] // TODO: we need to write zeroes in case of None here!
     pub fs_headers: [Option<RawNcaFsHeader>; 4],
 }
-// assert_eq_size!(assert_nca_size; RawNca, [u8; 0xC00]);
 
 fn read_fs_headers<R: Read + Seek>(
     header: &RawNcaHeader,
@@ -205,8 +266,8 @@ fn read_fs_headers<R: Read + Seek>(
                     XtsCryptArgs {
                         key,
                         sector: match magic {
-                            // For pre-1.0.0 "NCA2" NCAs, the first 0x400 byte are encrypted the same way as in NCA3.
-                            // However, each section header is individually encrypted as though it were sector 0, instead of the appropriate sector as in NCA3.
+                            // switchbrew: For pre-1.0.0 "NCA2" NCAs, the first 0x400 byte are encrypted the same way as in NCA3.
+                            //             However, each section header is individually encrypted as though it were sector 0, instead of the appropriate sector as in NCA3.
                             NcaMagic::Nca3 => 2 + i,
                             NcaMagic::Nca2 => 0,
                             _ => todo!("{:?}", magic),
@@ -225,32 +286,33 @@ fn read_fs_headers<R: Read + Seek>(
     }
 }
 
-#[derive(Debug, Clone, Copy, BinRead, BinWrite)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, BinRead, BinWrite)]
 pub struct Pfs0Superblock {
     pub master_hash: Hash,
     pub block_size: u32,
+    #[br(assert(always_2 == 0x2))]
+    #[bw(assert(*always_2 == 0x2))]
     pub always_2: u32,
     pub hash_table_offset: u64,
     pub hash_table_size: u64,
     pub pfs0_offset: u64,
-    // #[brw(align_after = 0x138)]
+    #[brw(pad_after = 0xF0)]
     pub pfs0_size: u64,
-    pub _0x48: SkipDebug<[u8; 0xF0]>,
 }
 
 pub const IVFC_MAX_LEVEL: usize = 6;
 
-#[derive(Debug, Clone, Copy, BinRead, BinWrite)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, BinRead, BinWrite)]
 pub struct BktrHeader {
     pub offset: u64,
     pub size: u64,
-    pub magic: [u8; 4], /* "BKTR" */
-    pub _0x14: u32,     /* Version? */
+    #[brw(magic = b"BKTR")] // why the magic is in the middle of the struct???
+    pub version: u32, /* Version? */
+    #[brw(pad_after = 0x4)] // reserved
     pub num_entries: u32,
-    pub _0x1c: u32, /* Reserved? */
 }
 
-#[derive(Debug, Clone, Copy, BinRead, BinWrite)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, BinRead, BinWrite)]
 pub struct IvfcLevelHeader {
     pub logical_offset: u64,
     pub hash_data_size: u64,
@@ -258,58 +320,64 @@ pub struct IvfcLevelHeader {
     pub reserved: u32,
 }
 
-#[derive(Debug, Clone, Copy, BinRead, BinWrite)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, BinRead, BinWrite)]
 #[brw(magic = b"IVFC")]
 pub struct IvfcHeader {
     pub id: u32,
     pub master_hash_size: u32,
     pub num_levels: u32,
     pub level_headers: [IvfcLevelHeader; IVFC_MAX_LEVEL],
-    pub _0xa0: [u8; 0x20],
+    #[brw(pad_before = 0x20)]
     pub master_hash: Hash,
 }
 
-#[derive(Debug, Clone, Copy, BinRead, BinWrite)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, BinRead, BinWrite)]
 pub struct BktrSuperblock {
     pub ivfc_header: IvfcHeader,
-    pub _0xe0: [u8; 0x18],
+    #[brw(pad_before = 0x18)]
     pub relocation_header: BktrHeader,
     pub subsection_header: BktrHeader,
 }
 
-#[derive(Debug, Clone, Copy, BinRead, BinWrite)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, BinRead, BinWrite)]
 pub struct RomfsSuperblock {
+    #[brw(pad_after = 0x58)]
     pub ivfc_header: IvfcHeader,
-    pub _0xe0: [u8; 0x58],
 }
+#[derive(Clone, Copy, BinRead, BinWrite)]
+pub struct UnknownSuperblock([u8; 0x138]);
+impl_debug_deserialize_serialize_hexstring!(UnknownSuperblock);
 
-#[derive(Clone, Copy, Debug, BinRead, BinWrite)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, BinRead, BinWrite)]
 #[br(import(partition_type: RawPartitionType, fs_type: RawFsType, crypto_type: CryptoType))]
-pub enum RawSuperblock {
+#[serde(tag = "type")]
+pub enum Superblock {
     #[br(pre_assert(partition_type == RawPartitionType::Pfs0 && fs_type == RawFsType::Pfs0))]
     Pfs0(Pfs0Superblock),
     #[br(pre_assert(partition_type == RawPartitionType::RomFs && fs_type == RawFsType::RomFs && crypto_type == CryptoType::Bktr))]
     Bktr(BktrSuperblock),
     #[br(pre_assert(partition_type == RawPartitionType::RomFs && fs_type == RawFsType::RomFs))]
     RomFs(RomfsSuperblock),
+    // no NCA0 support for now
     // Nca0Romfs(Nca0RomfsSuperblock),
-    Raw([u8; 0x138]),
+    /// Catchall for all unknown superblocks or weird header combinations
+    Unknown(UnknownSuperblock),
 }
-// assert_eq_size!(assert_superblock_size; RawSuperblock, [u8; 0x138]);
 
 #[derive(Clone, Copy, Debug, BinRead, BinWrite)]
+#[br(assert(version == 2))]
+#[bw(assert(*version == 2))]
 pub struct RawNcaFsHeader {
     pub version: u16,
     pub partition_type: RawPartitionType,
     pub fs_type: RawFsType,
+    #[brw(pad_after = 0x3)]
     pub crypt_type: CryptoType,
-    pub _0x5: [u8; 0x3],
     #[br(args(partition_type, fs_type, crypt_type))]
-    pub superblock: RawSuperblock,
+    pub superblock: Superblock,
+    #[brw(pad_after = 0xB8)]
     pub section_ctr: u64,
-    pub _0x148: [u8; 0xB8],
 }
-// assert_eq_size!(assert_nca_fs_header_size; RawNcaFsHeader, [u8; 0x148 + 0xB8]);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, BinRead, BinWrite)]
 #[brw(repr = u8)]
@@ -336,7 +404,8 @@ pub enum CryptoType {
 
 #[derive(Debug, Clone, Copy, BinRead, BinWrite)]
 pub struct RawSectionTableEntry {
+    // note: these offsets are divided by 0x200
     pub media_start_offset: u32,
+    #[brw(pad_after = 0x8)]
     pub media_end_offset: u32,
-    pub padding: [u8; 0x8],
 }

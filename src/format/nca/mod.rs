@@ -5,107 +5,96 @@
 //! the Horizon/NX OS are stored in this container, as it guarantees its
 //! authenticity, preventing tampering.
 //!
+//! NCAs consist of up to 4 sections, each containing some kind of file system.
+//!
+//! Generally, you can find three types of sections:
+//! - PartitionFs (aka pfs0) - A file system used mostly to contain exefs and metadata
+//! - RomFs - A file system used to contain game assets
+//! - RomFs patch - used to patch the RomFs when distributing updates
+//!
 //! For more information about the NCA file format, see the [switchbrew page].
 //!
 //! In order to parse an NCA, you may use the `from_file` method:
 //!
 //! ```
-//! # fn get_nca_file() -> std::io::Result<std::fs::File> {
-//! #   std::fs::File::open("tests/fixtures/test.nca")
-//! # }
-//! let f = get_nca_file()?;
-//! let nca = Nca::from_file(nca)?;
-//! let section = nca.section(0);
+//! use std::fs::File;
+//! use linkle::format::nca::Nca;
+//! use linkle::pki::Keys;
+//!
+//! let pki = Keys::new(None, false)?;
+//! let f = File::open("tests/fixtures/test.nca")?;
+//! let nca = Nca::from_file(&pki, nca, None)?;
+//! let section = nca.raw_section(0);
 //! ```
+//!
+//! Writing NCA files is not yet implemented.
 //!
 //! [switchbrew page]: https://switchbrew.org/w/index.php?title=NCA_Format
 
 use crate::error::Error;
-use crate::format::nca::structures::{
-    ContentType, CryptoType, Hash, KeyType, NcaMagic, RawNca, RawSuperblock,
-};
+use crate::format::nca::structures::{ContentType, CryptoType, KeyType, RawNca};
 use crate::pki::{Aes128Key, AesXtsKey, KeyName, Keys, TitleKey};
 use binrw::BinRead;
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use snafu::{Backtrace, GenerateImplicitData};
 use std::cmp::max;
-use std::io::{Read, Seek, Write};
+use std::io::{Read, Seek};
 
 mod crypto_stream;
 mod structures;
 
-use crate::format::nca::crypto_stream::{CryptoStream, CryptoStreamState};
+pub use crate::format::nca::crypto_stream::CryptoStream;
+use crate::format::nca::crypto_stream::CryptoStreamState;
 use crate::utils::{ReadRange, TryClone};
-pub use structures::RightsId;
+pub use structures::{
+    BktrSuperblock, NcaMagic, Pfs0Superblock, RightsId, RomfsSuperblock, SdkVersion, SigDebug,
+    Superblock, TitleId,
+};
 
+/// Contains information about NCA section collected from the header.
 #[derive(Debug, Serialize, Deserialize, Clone)]
-enum FsType {
-    Pfs0 {
-        master_hash: Hash,
-        block_size: u32,
-        hash_table_offset: u64,
-        hash_table_size: u64,
-        pfs0_offset: u64,
-        pfs0_size: u64,
-    },
-    RomFs,
+pub struct NcaSectionInfo {
+    /// Offset of the section in the NCA file.
+    pub media_start_offset: u64,
+    /// Offset of the end of the section in the NCA file.
+    pub media_end_offset: u64,
+    /// Cryptographic algorithm & key used to decrypt the section.
+    pub crypto: NcaCrypto,
+    /// Nonce used to decrypt the section.
+    pub nonce: u64,
+    /// Superblock of the section filesystem.
+    pub superblock: Superblock,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
-enum NcaFormat {
-    Nca3,
-    Nca2,
-    Nca0,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct NcaSectionHeader {
-    media_start_offset: u32,
-    media_end_offset: u32,
-    crypto: NcaCrypto,
-    fstype: FsType,
-    nonce: u64,
-}
-
-impl NcaSectionHeader {
-    fn start_offset(&self) -> u64 {
-        self.media_start_offset as u64 * 0x200
-    }
+impl NcaSectionInfo {
+    /// Get size of the section.
     fn size(&self) -> u64 {
-        (self.media_end_offset - self.media_start_offset) as u64 * 0x200
+        self.media_end_offset - self.media_start_offset
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy)]
-#[repr(transparent)]
-pub struct TitleId(u64);
-
-impl std::fmt::Debug for TitleId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:016x}", self.0)
-    }
-}
-
+/// Contains information about NCA collected from the header.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct NcaHeader {
-    format: NcaFormat,
-    sig: structures::SigDebug,
-    npdm_sig: structures::SigDebug,
-    is_gamecard: bool,
-    content_type: ContentType,
-    key_revision: u8,
-    key_type: KeyType,
-    nca_size: u64,
-    title_id: TitleId,
-    sdk_version: u32, // TODO: Better format
-    rights_id: RightsId,
-    sections: [Option<NcaSectionHeader>; 4],
+pub struct NcaInfo {
+    pub format: NcaMagic,
+    pub sig: SigDebug,
+    pub npdm_sig: SigDebug,
+    pub is_gamecard: bool,
+    pub content_type: ContentType,
+    pub key_revision: u8,
+    pub key_type: KeyType,
+    pub nca_size: u64,
+    pub title_id: TitleId,
+    pub sdk_version: SdkVersion,
+    pub rights_id: RightsId,
+    pub sections: [Option<NcaSectionInfo>; 4],
 }
 
+/// Represents an open NCA file available for reading.
 #[derive(Debug)]
 pub struct Nca<R> {
     stream: R,
-    info: NcaHeader,
+    info: NcaInfo,
 }
 
 fn get_key_area_key(pki: &Keys, key_version: u8, key_type: KeyType) -> Result<Aes128Key, Error> {
@@ -130,7 +119,7 @@ fn decrypt_header(pki: &Keys, file: &mut dyn Read) -> Result<RawNca, Error> {
 
     file.read_exact(&mut header)?;
 
-    // TODO: Check if NCA is already decrypted
+    // NOTE: no support for decrypted NCAs
 
     let header_key = pki.get_xts_key(KeyName::HeaderKey)?;
 
@@ -141,10 +130,14 @@ fn decrypt_header(pki: &Keys, file: &mut dyn Read) -> Result<RawNca, Error> {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-enum NcaCrypto {
+pub enum NcaCrypto {
+    /// No ecryption, the section is in plaintext.
     None,
+    /// AES-128-CTR encryption
     Ctr(Aes128Key),
+    /// Special variation of AES-128-CTR used for RomFs patching in updates
     Bktr(Aes128Key),
+    /// AES-128-XTS encryption (TODO: where is it used?)
     Xts(AesXtsKey),
 }
 
@@ -159,12 +152,6 @@ impl<R: Read> Nca<R> {
             header,
             fs_headers,
         } = decrypt_header(pki, &mut file)?;
-        let format = match &header.magic {
-            NcaMagic::Nca3 => NcaFormat::Nca3,
-            NcaMagic::Nca2 => NcaFormat::Nca2,
-            NcaMagic::Nca0 => NcaFormat::Nca0,
-            _ => unreachable!(),
-        };
 
         // TODO: NCA: Verify header with RSA2048 PSS
         // BODY: We want to make sure the NCAs have a valid signature before
@@ -207,14 +194,12 @@ impl<R: Read> Nca<R> {
         {
             // Check if section is present
             if let Some(fs) = fs {
-                assert_eq!(fs.version, 2, "Invalid NCA FS Header version");
-
                 let crypto = if has_rights_id {
                     match fs.crypt_type {
                         CryptoType::Ctr => NcaCrypto::Ctr(title_key.unwrap()),
                         CryptoType::Bktr => NcaCrypto::Bktr(title_key.unwrap()),
                         CryptoType::None => NcaCrypto::None,
-                        CryptoType::Xts => unreachable!(),
+                        CryptoType::Xts => unreachable!("Xts is not supported for RightsId crypto"),
                     }
                 } else {
                     match fs.crypt_type {
@@ -225,40 +210,28 @@ impl<R: Read> Nca<R> {
                     }
                 };
 
-                sections[idx] = Some(NcaSectionHeader {
+                sections[idx] = Some(NcaSectionInfo {
                     crypto,
-                    fstype: match fs.superblock {
-                        RawSuperblock::Pfs0(s) => FsType::Pfs0 {
-                            master_hash: s.master_hash,
-                            block_size: s.block_size,
-                            hash_table_offset: s.hash_table_offset,
-                            hash_table_size: s.hash_table_size,
-                            pfs0_offset: s.pfs0_offset,
-                            pfs0_size: s.pfs0_size,
-                        },
-                        RawSuperblock::RomFs(_) => FsType::RomFs,
-                        _ => panic!("Unknown superblock type"),
-                    },
+                    superblock: fs.superblock,
                     nonce: fs.section_ctr,
-                    media_start_offset: section.media_start_offset,
-                    media_end_offset: section.media_end_offset,
+                    media_start_offset: section.media_start_offset as u64 * 0x200,
+                    media_end_offset: section.media_end_offset as u64 * 0x200,
                 });
             }
         }
 
         let nca = Nca {
             stream: file,
-            info: NcaHeader {
-                format,
+            info: NcaInfo {
+                format: header.magic,
                 sig: sigs.fixed_key_sig,
                 npdm_sig: sigs.npdm_sig,
-                is_gamecard: header.is_gamecard != 0,
+                is_gamecard: header.is_gamecard,
                 content_type: header.content_type,
                 key_revision: master_key_revision,
                 key_type: header.key_type,
                 nca_size: header.nca_size,
-                title_id: TitleId(header.title_id),
-                // TODO: Store the SDK version in a more human readable format.
+                title_id: header.title_id,
                 sdk_version: header.sdk_version,
                 rights_id: header.rights_id,
                 sections,
@@ -270,15 +243,20 @@ impl<R: Read> Nca<R> {
 }
 
 impl<R: TryClone + Seek> Nca<R> {
+    /// Get access to raw reader for a specific section.
+    ///
+    /// Note: this provides access to the raw NCA section data, doing just the decryption.
+    /// It does not perform any hash verification, or any other checks
+    ///     (as these are dependent on the FS inside the section).
     pub fn raw_section(&self, id: usize) -> Result<CryptoStream<ReadRange<R>>, Error> {
         if let Some(section) = &self.info.sections[id] {
             // TODO: Nca::raw_section should reopen the file, not dup2 the handle.
             // (why though?)
             let mut stream = self.stream.try_clone()?;
-            stream.seek(std::io::SeekFrom::Start(section.start_offset()))?;
+            stream.seek(std::io::SeekFrom::Start(section.media_start_offset))?;
 
             Ok(CryptoStream {
-                stream: ReadRange::new(stream, section.start_offset(), section.size()),
+                stream: ReadRange::new(stream, section.media_start_offset, section.size()),
                 // Keep a 1-block large buffer of data in case of partial reads.
                 buffer: [0; 0x10],
                 state: CryptoStreamState {
@@ -293,28 +271,10 @@ impl<R: TryClone + Seek> Nca<R> {
             })
         }
     }
-
-    // pub fn section(
-    //     &self,
-    //     id: usize,
-    // ) -> Result<VerificationStream<CryptoStream<ReadRange<R>>>, Error> {
-    //     let mut raw_section = self.raw_section(id)?;
-    //     let (start_offset, size) = match raw_section.state.json.fstype {
-    //         FsType::Pfs0 {
-    //             pfs0_offset,
-    //             pfs0_size,
-    //             ..
-    //         } => (pfs0_offset, pfs0_size),
-    //         _ => (0, raw_section.state.json.size()),
-    //     };
-    //     raw_section.seek_aligned(io::SeekFrom::Start(start_offset));
-    //     let json = raw_section.state.json.clone();
-    //     Ok(VerificationStream::new(raw_section, json))
-    // }
 }
 
 impl<R> Nca<R> {
-    pub fn header(&self) -> &NcaHeader {
+    pub fn info(&self) -> &NcaInfo {
         &self.info
     }
 }

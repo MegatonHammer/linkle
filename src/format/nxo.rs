@@ -2,7 +2,7 @@ use crate::format::utils::HexOrNum;
 use crate::format::{nacp::NacpFile, npdm::KernelCapability, romfs::RomFs, utils};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use elf::types::{Machine, ProgramHeader, SectionHeader, EM_AARCH64, EM_ARM, PT_LOAD, SHT_NOTE};
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::convert::{TryFrom, TryInto};
 use std::fs::File;

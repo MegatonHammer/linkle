@@ -1,6 +1,6 @@
 use crate::format::utils::HexOrNum;
 use bit_field::BitField;
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::convert::TryFrom;
 
