@@ -2,8 +2,6 @@ use serde::de::{Unexpected, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
 use std::fmt;
-use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
 
 pub fn align(size: usize, padding: usize) -> usize {
     ((size as usize) + padding) & !padding
@@ -19,16 +17,6 @@ pub fn check_string_or_truncate(string: &mut String, name: &str, size: usize) {
         println!("Warning: Truncating {} to 0x{:x}", name, size - 1);
         string.truncate(size);
     }
-}
-
-pub fn get_segment_data(
-    file: &mut File,
-    header: &elf::types::ProgramHeader,
-) -> std::io::Result<Vec<u8>> {
-    let mut data = vec![0; header.filesz as usize];
-    file.seek(SeekFrom::Start(header.offset))?;
-    file.read_exact(&mut data)?;
-    Ok(data)
 }
 
 pub fn compress_lz4(uncompressed_data: &[u8]) -> std::io::Result<Vec<u8>> {

@@ -1,19 +1,20 @@
 use crate::format::utils::HexOrNum;
 use crate::format::{nacp::NacpFile, npdm::KernelCapability, romfs::RomFs, utils};
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use elf::types::{Machine, ProgramHeader, SectionHeader, EM_AARCH64, EM_ARM, PT_LOAD, SHT_NOTE};
+use byteorder::{LittleEndian, WriteBytesExt};
+use elf::abi::{EM_AARCH64, EM_ARM, PT_LOAD, SHT_NOTE};
+use elf::{section::SectionHeader, segment::ProgramHeader};
 use serde_derive::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::convert::{TryFrom, TryInto};
 use std::fs::File;
-use std::io::{self, Cursor, Seek, SeekFrom, Write};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process;
 
 // TODO: Support switchbrew's embedded files for NRO
 pub struct NxoFile {
-    file: File,
-    machine: Machine,
+    file_data: Vec<u8>,
+    machine: u16,
     text_segment: ProgramHeader,
     rodata_segment: ProgramHeader,
     data_segment: ProgramHeader,
@@ -38,7 +39,7 @@ pub struct KipNpdm {
 }
 
 fn pad_segment(previous_segment_data: &mut Vec<u8>, offset: usize, segment: &ProgramHeader) {
-    let segment_vaddr = segment.vaddr as usize;
+    let segment_vaddr = segment.p_vaddr as usize;
     let segment_supposed_start = previous_segment_data.len() + offset;
 
     if segment_vaddr > segment_supposed_start {
@@ -99,7 +100,7 @@ where
         nxo_file
             .dynamic_section
             .as_ref()
-            .map(|v| v.addr as u32 - offset)
+            .map(|v| v.sh_addr as u32 - offset)
             .unwrap_or(0),
     )?;
 
@@ -111,7 +112,7 @@ where
     let (eh_frame_hdr_addr, eh_frame_hdr_size) = nxo_file
         .eh_frame_hdr_section
         .as_ref()
-        .map(|v| (v.addr, v.size))
+        .map(|v| (v.sh_addr, v.sh_size))
         .unwrap_or((0, 0));
     // EH Frame Header Start
     output_writter.write_u32::<LittleEndian>(eh_frame_hdr_addr as u32 - offset)?;
@@ -128,36 +129,45 @@ where
 impl NxoFile {
     pub fn from_elf(input: &str) -> std::io::Result<Self> {
         let path = PathBuf::from(input);
-        let mut file = File::open(path)?;
+        let file_data = std::fs::read(path)?;
+        let elf_file =
+            elf::ElfBytes::<elf::endian::AnyEndian>::minimal_parse(file_data.as_slice()).unwrap();
 
-        let elf_file = elf::File::open_stream(&mut file).unwrap();
-
-        if elf_file.ehdr.machine != EM_AARCH64 && elf_file.ehdr.machine != EM_ARM {
+        let machine = elf_file.ehdr.e_machine;
+        if machine != EM_AARCH64 && machine != EM_ARM {
             println!("Error: Invalid ELF file (expected ARM or AArch64 machine)");
             process::exit(1)
         }
 
-        let sections = &elf_file.sections;
-        let phdrs: Vec<ProgramHeader> = elf_file.phdrs.to_vec();
-        let text_segment = phdrs.get(0).unwrap_or_else(|| {
+        let (shdrs, shdr_strs) = elf_file.section_headers_with_strtab().unwrap_or_else(|_| {
+            println!("Error: ELF file had no section headers");
+            process::exit(1)
+        });
+        let (shdrs, shdr_strs) = (shdrs.unwrap(), shdr_strs.unwrap());
+        let phdrs = elf_file.segments().unwrap_or_else(|| {
+            println!("Error: ELF file had no segment headers");
+            process::exit(1)
+        });
+
+        let text_segment = phdrs.get(0).unwrap_or_else(|_| {
             println!("Error: .text not found in ELF file");
             process::exit(1)
         });
 
-        let rodata_segment = phdrs.get(1).unwrap_or_else(|| {
+        let rodata_segment = phdrs.get(1).unwrap_or_else(|_| {
             println!("Error: .rodata not found in ELF file");
             process::exit(1)
         });
 
-        let data_segment = phdrs.get(2).unwrap_or_else(|| {
+        let data_segment = phdrs.get(2).unwrap_or_else(|_| {
             println!("Error: .data not found in ELF file");
             process::exit(1)
         });
 
-        let bss_segment = match phdrs.get(3) {
+        let bss_segment = match phdrs.get(3).ok() {
             Some(s) => {
-                if s.progtype == PT_LOAD {
-                    Some(*s)
+                if s.p_type == PT_LOAD {
+                    Some(s)
                 } else {
                     None
                 }
@@ -171,33 +181,33 @@ impl NxoFile {
         let mut dynsym_section = None;
         let mut eh_frame_hdr_section = None;
 
-        for section in sections {
-            if section.shdr.shtype == SHT_NOTE {
-                let mut data = Cursor::new(section.data.clone());
-                // Ignore the two first offset of nhdr32
-                data.seek(SeekFrom::Start(0x8)).unwrap();
-                let n_type = data.read_u32::<LittleEndian>().unwrap();
-
-                // BUILD_ID
-                if n_type == 0x3 {
-                    build_id = Some(data.into_inner());
+        for shdr in shdrs {
+            if shdr.sh_type == SHT_NOTE {
+                let notes = elf_file.section_data_as_notes(&shdr).unwrap();
+                for note in notes {
+                    // find the build id note, if any
+                    if let elf::note::Note::GnuBuildId(note_build_id) = note {
+                        build_id = Some(Vec::from(note_build_id.0));
+                        break;
+                    };
                 }
             }
-            match &*section.shdr.name {
-                ".dynamic" => dynamic_section = Some(section.shdr.clone()),
-                ".dynstr" => dynstr_section = Some(section.shdr.clone()),
-                ".dynsym" => dynsym_section = Some(section.shdr.clone()),
-                ".eh_frame_hdr" => eh_frame_hdr_section = Some(section.shdr.clone()),
+            let sh_name = shdr_strs.get(shdr.sh_name as usize).unwrap();
+            match sh_name {
+                ".dynamic" => dynamic_section = Some(shdr),
+                ".dynstr" => dynstr_section = Some(shdr),
+                ".dynsym" => dynsym_section = Some(shdr),
+                ".eh_frame_hdr" => eh_frame_hdr_section = Some(shdr),
                 _ => (),
             }
         }
 
         Ok(NxoFile {
-            file,
-            machine: elf_file.ehdr.machine,
-            text_segment: *text_segment,
-            rodata_segment: *rodata_segment,
-            data_segment: *data_segment,
+            file_data,
+            machine,
+            text_segment,
+            rodata_segment,
+            data_segment,
             bss_segment,
             build_id,
             dynamic_section,
@@ -222,9 +232,12 @@ impl NxoFile {
         let data_segment = &self.data_segment;
 
         // Get segments data
-        let mut code = utils::get_segment_data(&mut self.file, text_segment)?;
-        let mut rodata = utils::get_segment_data(&mut self.file, rodata_segment)?;
-        let mut data = utils::get_segment_data(&mut self.file, data_segment)?;
+        let elf_file =
+            elf::ElfBytes::<elf::endian::AnyEndian>::minimal_parse(self.file_data.as_slice())
+                .unwrap();
+        let mut code = Vec::from(elf_file.segment_data(text_segment).unwrap());
+        let mut rodata = Vec::from(elf_file.segment_data(rodata_segment).unwrap());
+        let mut data = Vec::from(elf_file.segment_data(data_segment).unwrap());
 
         // First correctly align to be conform to the NRO standard
         utils::add_padding(&mut code, 0xFFF);
@@ -279,29 +292,29 @@ impl NxoFile {
         // BSS size
         let (bss_start, bss_size) = match self.bss_segment {
             Some(segment) => {
-                if segment.vaddr != u64::from(file_offset) {
+                if segment.p_vaddr != u64::from(file_offset) {
                     println!(
                     "Warning: possible misalign bss\n.bss addr: 0x{:x}\nexpected offset: 0x{:x}",
-                    segment.vaddr, file_offset);
+                    segment.p_vaddr, file_offset);
                 }
                 output_writter
-                    .write_u32::<LittleEndian>(((segment.memsz + 0xFFF) & !0xFFF) as u32)?;
+                    .write_u32::<LittleEndian>(((segment.p_memsz + 0xFFF) & !0xFFF) as u32)?;
                 (
-                    segment.vaddr as u32,
-                    ((segment.memsz + 0xFFF) & !0xFFF) as u32,
+                    segment.p_vaddr as u32,
+                    ((segment.p_memsz + 0xFFF) & !0xFFF) as u32,
                 )
             }
             _ => {
                 // in this case the bss is missing or is embedeed in .data. libnx does that, let's support it
-                let data_segment_size = (data_segment.filesz + 0xFFF) & !0xFFF;
-                let bss_size = if data_segment.memsz > data_segment_size {
-                    (((data_segment.memsz - data_segment_size) + 0xFFF) & !0xFFF) as u32
+                let data_segment_size = (data_segment.p_filesz + 0xFFF) & !0xFFF;
+                let bss_size = if data_segment.p_memsz > data_segment_size {
+                    (((data_segment.p_memsz - data_segment_size) + 0xFFF) & !0xFFF) as u32
                 } else {
                     0
                 };
                 output_writter.write_u32::<LittleEndian>(bss_size)?;
                 (
-                    data_segment.vaddr as u32 + data_segment.memsz as u32,
+                    data_segment.p_vaddr as u32 + data_segment.p_memsz as u32,
                     bss_size,
                 )
             }
@@ -324,13 +337,13 @@ impl NxoFile {
         output_writter.write_u32::<LittleEndian>(
             self.dynstr_section
                 .as_ref()
-                .map(|v| u32::try_from(v.addr).unwrap())
+                .map(|v| u32::try_from(v.sh_addr).unwrap())
                 .unwrap_or(0),
         )?;
         output_writter.write_u32::<LittleEndian>(
             self.dynstr_section
                 .as_ref()
-                .map(|v| u32::try_from(v.size).unwrap())
+                .map(|v| u32::try_from(v.sh_size).unwrap())
                 .unwrap_or(0),
         )?;
 
@@ -338,13 +351,13 @@ impl NxoFile {
         output_writter.write_u32::<LittleEndian>(
             self.dynsym_section
                 .as_ref()
-                .map(|v| u32::try_from(v.addr).unwrap())
+                .map(|v| u32::try_from(v.sh_addr).unwrap())
                 .unwrap_or(0),
         )?;
         output_writter.write_u32::<LittleEndian>(
             self.dynsym_section
                 .as_ref()
-                .map(|v| u32::try_from(v.size).unwrap())
+                .map(|v| u32::try_from(v.sh_size).unwrap())
                 .unwrap_or(0),
         )?;
 
@@ -483,9 +496,13 @@ impl NxoFile {
         let rodata_segment = &self.rodata_segment;
         let data_segment = &self.data_segment;
 
-        let mut code = utils::get_segment_data(&mut self.file, text_segment)?;
-        let mut rodata = utils::get_segment_data(&mut self.file, rodata_segment)?;
-        let mut data = utils::get_segment_data(&mut self.file, data_segment)?;
+        // Get segments data
+        let elf_file =
+            elf::ElfBytes::<elf::endian::AnyEndian>::minimal_parse(self.file_data.as_slice())
+                .unwrap();
+        let mut code = Vec::from(elf_file.segment_data(text_segment).unwrap());
+        let mut rodata = Vec::from(elf_file.segment_data(rodata_segment).unwrap());
+        let mut data = Vec::from(elf_file.segment_data(data_segment).unwrap());
 
         // First correctly align to avoid possible compression issues
         utils::add_padding(&mut code, 0xFFF);
@@ -494,7 +511,7 @@ impl NxoFile {
 
         // Because bss doesn't have it's own segment in NSO, we need to pad .data to the .bss vaddr
         if let Some(segment) = self.bss_segment {
-            pad_segment(&mut data, data_segment.vaddr as usize, &segment);
+            pad_segment(&mut data, data_segment.p_vaddr as usize, &segment);
         }
 
         // NSO magic
@@ -515,7 +532,7 @@ impl NxoFile {
         let compressed_code = utils::compress_lz4(&code)?;
         let compressed_code_size = compressed_code.len() as u32;
         output_writter.write_u32::<LittleEndian>(file_offset as u32)?;
-        output_writter.write_u32::<LittleEndian>(text_segment.vaddr as u32)?;
+        output_writter.write_u32::<LittleEndian>(text_segment.p_vaddr as u32)?;
         output_writter.write_u32::<LittleEndian>(code_size as u32)?;
 
         // TODO: Module Name Offset
@@ -528,7 +545,7 @@ impl NxoFile {
         let compressed_rodata = utils::compress_lz4(&rodata)?;
         let compressed_rodata_size = compressed_rodata.len() as u32;
         output_writter.write_u32::<LittleEndian>(file_offset as u32)?;
-        output_writter.write_u32::<LittleEndian>(rodata_segment.vaddr as u32)?;
+        output_writter.write_u32::<LittleEndian>(rodata_segment.p_vaddr as u32)?;
         output_writter.write_u32::<LittleEndian>(rodata_size as u32)?;
 
         // TODO: Module Name Size
@@ -542,26 +559,27 @@ impl NxoFile {
         let compressed_data_size = compressed_data.len() as u32;
         let uncompressed_data_size = data.len() as u64;
         output_writter.write_u32::<LittleEndian>(file_offset as u32)?;
-        output_writter.write_u32::<LittleEndian>(data_segment.vaddr as u32)?;
+        output_writter.write_u32::<LittleEndian>(data_segment.p_vaddr as u32)?;
         output_writter.write_u32::<LittleEndian>(data_size as u32)?;
 
         // BSS size
         match self.bss_segment {
             Some(segment) => {
-                let memory_offset = data_segment.vaddr + uncompressed_data_size;
-                if segment.vaddr != memory_offset {
+                let memory_offset = data_segment.p_vaddr + uncompressed_data_size;
+                if segment.p_vaddr != memory_offset {
                     println!(
                     "Warning: possible misalign bss\n.bss addr: 0x{:x}\nexpected offset: 0x{:x}",
-                    segment.vaddr, memory_offset);
+                    segment.p_vaddr, memory_offset);
                 }
                 // (bss_segment['p_memsz'] + 0xFFF) & ~0xFFF
                 output_writter
-                    .write_u32::<LittleEndian>(((segment.memsz + 0xFFF) & !0xFFF) as u32)?;
+                    .write_u32::<LittleEndian>(((segment.p_memsz + 0xFFF) & !0xFFF) as u32)?;
             }
             _ => {
                 // in this case the bss is missing or is embedeed in .data. libnx does that, let's support it
-                output_writter
-                    .write_u32::<LittleEndian>((data_segment.memsz - data_segment.filesz) as u32)?;
+                output_writter.write_u32::<LittleEndian>(
+                    (data_segment.p_memsz - data_segment.p_filesz) as u32,
+                )?;
             }
         }
 
@@ -584,26 +602,26 @@ impl NxoFile {
         output_writter.write_u32::<LittleEndian>(
             self.dynstr_section
                 .as_ref()
-                .map(|v| u32::try_from(v.addr).unwrap())
+                .map(|v| u32::try_from(v.sh_addr).unwrap())
                 .unwrap_or(0),
         )?;
         output_writter.write_u32::<LittleEndian>(
             self.dynstr_section
                 .as_ref()
-                .map(|v| u32::try_from(v.size).unwrap())
+                .map(|v| u32::try_from(v.sh_size).unwrap())
                 .unwrap_or(0),
         )?;
         // SegmentHeaderRelative for .dynsym
         output_writter.write_u32::<LittleEndian>(
             self.dynsym_section
                 .as_ref()
-                .map(|v| u32::try_from(v.addr).unwrap())
+                .map(|v| u32::try_from(v.sh_addr).unwrap())
                 .unwrap_or(0),
         )?;
         output_writter.write_u32::<LittleEndian>(
             self.dynsym_section
                 .as_ref()
-                .map(|v| u32::try_from(v.size).unwrap())
+                .map(|v| u32::try_from(v.sh_size).unwrap())
                 .unwrap_or(0),
         )?;
 
@@ -651,11 +669,15 @@ impl NxoFile {
             unimplemented!("Unknown machine type");
         }
 
-        let mut segment_data = utils::get_segment_data(&mut self.file, &self.text_segment)?;
+        let elf_file =
+            elf::ElfBytes::<elf::endian::AnyEndian>::minimal_parse(self.file_data.as_slice())
+                .unwrap();
+
+        let mut segment_data = Vec::from(elf_file.segment_data(&self.text_segment).unwrap());
         let text_data = utils::compress_blz(&mut segment_data).unwrap();
-        let mut segment_data = utils::get_segment_data(&mut self.file, &self.rodata_segment)?;
+        let mut segment_data = Vec::from(elf_file.segment_data(&self.rodata_segment).unwrap());
         let rodata_data = utils::compress_blz(&mut segment_data).unwrap();
-        let mut segment_data = utils::get_segment_data(&mut self.file, &self.data_segment)?;
+        let mut segment_data = Vec::from(elf_file.segment_data(&self.data_segment).unwrap());
         let data_data = utils::compress_blz(&mut segment_data).unwrap();
 
         write_kip_segment_header(output_writer, &self.text_segment, 0, text_data.len() as u32)?;
@@ -670,21 +692,21 @@ impl NxoFile {
 
         if let Some(segment) = self.bss_segment {
             output_writer.write_u32::<LittleEndian>(
-                u32::try_from(segment.vaddr).expect("BSS vaddr too big"),
+                u32::try_from(segment.p_vaddr).expect("BSS vaddr too big"),
             )?;
             output_writer.write_u32::<LittleEndian>(
-                u32::try_from(segment.memsz).expect("BSS memsize too big"),
+                u32::try_from(segment.p_memsz).expect("BSS memsize too big"),
             )?;
         } else {
             // in this case the bss is missing or is embedeed in .data. libnx does that, let's support it
-            let data_segment_size = (self.data_segment.filesz + 0xFFF) & !0xFFF;
-            let bss_size = if self.data_segment.memsz > data_segment_size {
-                (((self.data_segment.memsz - data_segment_size) + 0xFFF) & !0xFFF) as u32
+            let data_segment_size = (self.data_segment.p_filesz + 0xFFF) & !0xFFF;
+            let bss_size = if self.data_segment.p_memsz > data_segment_size {
+                (((self.data_segment.p_memsz - data_segment_size) + 0xFFF) & !0xFFF) as u32
             } else {
                 0
             };
             output_writer.write_u32::<LittleEndian>(
-                u32::try_from(self.data_segment.vaddr + data_segment_size).unwrap(),
+                u32::try_from(self.data_segment.p_vaddr + data_segment_size).unwrap(),
             )?;
             output_writer.write_u32::<LittleEndian>(bss_size)?;
         }
@@ -740,9 +762,9 @@ where
     T: Write,
 {
     output_writer
-        .write_u32::<LittleEndian>(u32::try_from(segment.vaddr).expect("vaddr too big"))?;
+        .write_u32::<LittleEndian>(u32::try_from(segment.p_vaddr).expect("vaddr too big"))?;
     output_writer
-        .write_u32::<LittleEndian>(u32::try_from(segment.filesz).expect("memsz too big"))?;
+        .write_u32::<LittleEndian>(u32::try_from(segment.p_filesz).expect("memsz too big"))?;
     output_writer.write_u32::<LittleEndian>(compressed_size)?;
     output_writer.write_u32::<LittleEndian>(attributes)?;
 
