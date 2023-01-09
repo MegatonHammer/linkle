@@ -19,8 +19,7 @@ path = "src/bin/cargo-nro.rs"
 required-features = ["binaries"]
 
 [dependencies]
-# there are a lot of breaking changes there, kinda hard to update
-elf = "0.0.12"
+elf = "0.7.1"
 byteorder = "1"
 lz4 = "1.23.1"
 clap = { version = "4.0.32", optional = true, features = ["cargo"] }
