@@ -1,5 +1,5 @@
 use crate::error::Error;
-use crate::format::nca::{NcaCrypto, SectionJson};
+use crate::format::nca::{NcaCrypto, NcaSectionHeader};
 use crate::utils::align_down;
 use byteorder::{ByteOrder, BE};
 use std::cmp::min;
@@ -21,7 +21,7 @@ pub struct CryptoStream<R> {
 #[derive(Debug)]
 pub struct CryptoStreamState {
     pub(super) offset: u64,
-    pub(super) json: SectionJson,
+    pub(super) json: NcaSectionHeader,
 }
 
 impl<R: Seek> CryptoStream<R> {
@@ -44,8 +44,8 @@ impl CryptoStreamState {
     fn get_ctr(&self) -> [u8; 0x10] {
         let offset = self.json.start_offset() / 16 + self.offset / 16;
         let mut ctr = [0; 0x10];
-        // Write section nounce in Big Endian.
-        BE::write_u64(&mut ctr[..8], self.json.nounce);
+        // Write section nonce in Big Endian.
+        BE::write_u64(&mut ctr[..8], self.json.nonce);
         // Set ctr to offset / BLOCK_SIZE, in big endian.
         BE::write_u64(&mut ctr[8..], offset);
         ctr

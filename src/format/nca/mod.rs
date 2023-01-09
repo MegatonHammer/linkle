@@ -29,7 +29,7 @@ use binrw::BinRead;
 use serde_derive::{Deserialize, Serialize};
 use snafu::{Backtrace, GenerateImplicitData};
 use std::cmp::max;
-use std::io::{Read, Seek};
+use std::io::{Read, Seek, Write};
 
 mod crypto_stream;
 mod structures;
@@ -59,15 +59,15 @@ enum NcaFormat {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct SectionJson {
+pub struct NcaSectionHeader {
     media_start_offset: u32,
     media_end_offset: u32,
     crypto: NcaCrypto,
     fstype: FsType,
-    nounce: u64,
+    nonce: u64,
 }
 
-impl SectionJson {
+impl NcaSectionHeader {
     fn start_offset(&self) -> u64 {
         self.media_start_offset as u64 * 0x200
     }
@@ -87,7 +87,7 @@ impl std::fmt::Debug for TitleId {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct NcaJson {
+pub struct NcaHeader {
     format: NcaFormat,
     sig: structures::SigDebug,
     npdm_sig: structures::SigDebug,
@@ -99,13 +99,13 @@ pub struct NcaJson {
     title_id: TitleId,
     sdk_version: u32, // TODO: Better format
     rights_id: RightsId,
-    sections: [Option<SectionJson>; 4],
+    sections: [Option<NcaSectionHeader>; 4],
 }
 
 #[derive(Debug)]
 pub struct Nca<R> {
     stream: R,
-    json: NcaJson,
+    info: NcaHeader,
 }
 
 fn get_key_area_key(pki: &Keys, key_version: u8, key_type: KeyType) -> Result<Aes128Key, Error> {
@@ -127,46 +127,12 @@ fn get_master_key_revision(crypto_type: u8, crypto_type2: u8) -> u8 {
 fn decrypt_header(pki: &Keys, file: &mut dyn Read) -> Result<RawNca, Error> {
     // Decrypt header.
     let mut header = [0; 0xC00];
-    // let mut decrypted_header = [0; 0xC00];
 
     file.read_exact(&mut header)?;
 
     // TODO: Check if NCA is already decrypted
 
     let header_key = pki.get_xts_key(KeyName::HeaderKey)?;
-    // decrypted_header[..0x400].copy_from_slice(&header[..0x400]);
-    // header_key.decrypt(&mut decrypted_header[..0x400], 0, 0x200)?;
-    //
-    // // skip 2 signature blocks
-    // let magic = &decrypted_header[0x200..][..4];
-    // match magic {
-    //     b"NCA3" => {
-    //         decrypted_header.copy_from_slice(&header);
-    //         header_key.decrypt(&mut decrypted_header, 0, 0x200)?;
-    //     }
-    //     b"NCA2" => {
-    //         todo!()
-    //         // for (i, fsheader) in raw_nca.fs_headers.iter().enumerate() {
-    //         //     let offset = 0x400 + i * 0x200;
-    //         //     if &fsheader._0x148[..] != &[0; 0xB8][..] {
-    //         //         decrypted_header[offset..offset + 0x200]
-    //         //             .copy_from_slice(&header[offset..offset + 0x200]);
-    //         //         header_key.decrypt(&mut decrypted_header[offset..offset + 0x200], 0, 0x200)?;
-    //         //     } else {
-    //         //         decrypted_header[offset..offset + 0x200].copy_from_slice(&[0; 0x200]);
-    //         //     }
-    //         // }
-    //     }
-    //     b"NCA0" => unimplemented!("NCA0 parsing is not implemented yet"),
-    //     _ => {
-    //         return Err(Error::NcaParse {
-    //             key_name: "header_key",
-    //             backtrace: Backtrace::generate(),
-    //         })
-    //     }
-    // }
-
-    // println!("{}", pretty_hex::pretty_hex(&decrypted_header));
 
     let mut raw_nca = std::io::Cursor::new(header);
     let raw_nca =
@@ -259,7 +225,7 @@ impl<R: Read> Nca<R> {
                     }
                 };
 
-                sections[idx] = Some(SectionJson {
+                sections[idx] = Some(NcaSectionHeader {
                     crypto,
                     fstype: match fs.superblock {
                         RawSuperblock::Pfs0(s) => FsType::Pfs0 {
@@ -273,7 +239,7 @@ impl<R: Read> Nca<R> {
                         RawSuperblock::RomFs(_) => FsType::RomFs,
                         _ => panic!("Unknown superblock type"),
                     },
-                    nounce: fs.section_ctr,
+                    nonce: fs.section_ctr,
                     media_start_offset: section.media_start_offset,
                     media_end_offset: section.media_end_offset,
                 });
@@ -282,7 +248,7 @@ impl<R: Read> Nca<R> {
 
         let nca = Nca {
             stream: file,
-            json: NcaJson {
+            info: NcaHeader {
                 format,
                 sig: sigs.fixed_key_sig,
                 npdm_sig: sigs.npdm_sig,
@@ -305,7 +271,7 @@ impl<R: Read> Nca<R> {
 
 impl<R: TryClone + Seek> Nca<R> {
     pub fn raw_section(&self, id: usize) -> Result<CryptoStream<ReadRange<R>>, Error> {
-        if let Some(section) = &self.json.sections[id] {
+        if let Some(section) = &self.info.sections[id] {
             // TODO: Nca::raw_section should reopen the file, not dup2 the handle.
             // (why though?)
             let mut stream = self.stream.try_clone()?;
@@ -345,4 +311,10 @@ impl<R: TryClone + Seek> Nca<R> {
     //     let json = raw_section.state.json.clone();
     //     Ok(VerificationStream::new(raw_section, json))
     // }
+}
+
+impl<R> Nca<R> {
+    pub fn header(&self) -> &NcaHeader {
+        &self.info
+    }
 }

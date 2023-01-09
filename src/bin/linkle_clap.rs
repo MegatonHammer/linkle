@@ -300,10 +300,10 @@ fn extract_nca(
     let keys = linkle::pki::Keys::new(key_path, is_dev)?;
     let title_key = title_key.map(linkle::pki::parse_title_key).transpose()?;
     let nca = linkle::format::nca::Nca::from_file(&keys, File::open(input_file)?, title_key)?;
-    // if let Some(output_header_json) = output_header_json {
-    //     let mut output_header_json = File::create(output_header_json)?;
-    //     nca.write_json(&mut output_header_json).unwrap();
-    // }
+    if let Some(output_header_json) = output_header_json {
+        let mut output_header_json = File::create(output_header_json)?;
+        serde_json::to_writer_pretty(&mut output_header_json, &nca.header())?;
+    }
     if let Some(output_section0) = output_section0 {
         let mut output_section0 = File::create(output_section0)?;
         let mut section = nca.raw_section(0).unwrap();
